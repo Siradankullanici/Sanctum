@@ -39,7 +39,7 @@ impl DriverMessagesWithMutex {
 
          let irql = unsafe { KeGetCurrentIrql() };
          if irql > APC_LEVEL as u8 {
-             println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
              return;
          }
 
@@ -61,7 +61,7 @@ impl DriverMessagesWithMutex {
          
          let irql = unsafe { KeGetCurrentIrql() };
          if irql > APC_LEVEL as u8 {
-             println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
              return;
          }
 
@@ -84,7 +84,7 @@ impl DriverMessagesWithMutex {
 
         let irql = unsafe { KeGetCurrentIrql() };
         if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+            println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
             return;
         }
 
@@ -107,7 +107,7 @@ impl DriverMessagesWithMutex {
 
         let irql = unsafe { KeGetCurrentIrql() };
         if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+            println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
             return None;
         }
 
