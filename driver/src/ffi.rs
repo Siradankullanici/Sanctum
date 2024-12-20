@@ -2,7 +2,7 @@
 
 use core::{ffi::c_void, ptr::null_mut};
 
-use wdk_sys::{ntddk::KeInitializeEvent, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, OBJECT_ATTRIBUTES, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES, PSECURITY_DESCRIPTOR, PUNICODE_STRING, ULONG, _EVENT_TYPE::SynchronizationEvent};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, KeInitializeEvent}, DISPATCH_LEVEL, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, OBJECT_ATTRIBUTES, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES, PSECURITY_DESCRIPTOR, PUNICODE_STRING, ULONG, _EVENT_TYPE::SynchronizationEvent};
 
 // #[link(name = "ntoskrnl")]
 // extern "system" {
@@ -21,6 +21,10 @@ pub unsafe fn IoGetCurrentIrpStackLocation(irp: PIRP) -> PIO_STACK_LOCATION {
 
 #[allow(non_snake_case)]
 pub unsafe fn ExInitializeFastMutex(kmutex: *mut FAST_MUTEX) {
+    // check IRQL
+    let irql = unsafe { KeGetCurrentIrql() };
+    assert!(irql as u32 <= DISPATCH_LEVEL);
+
     core::ptr::write_volatile(&mut (*kmutex).Count, FM_LOCK_BIT as i32);
 
     (*kmutex).Owner = core::ptr::null_mut();
