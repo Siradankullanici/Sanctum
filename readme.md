@@ -22,11 +22,9 @@ A high level view of my API design for the internal application (not counting an
 
 ### Why Rust for writing a Windows Driver
 
-Traditionally, drivers have been written in C and, to some extent, C++. While it might seem significantly easier to write this project in C—I even began it that way—as an avid Rust enthusiast, I found myself longing for Rust's features and safety guarantees. Writing in C or C++ made me miss the modern tooling and expressive power that Rust provides.
+I started writing this driver in C, but having stepped away from C for some time, i missed a lot of Rust's features.
 
-Thanks to Rust's ability to operate in embedded and kernel development environments through [libcore no_std](https://doc.rust-lang.org/core/), and with Microsoft's support for developing drivers in Rust, Rust comes up as an excellent candidate for a "safer" approach to driver development. I use "safer" in quotes because, despite Rust's safety guarantees, we still need to interact with unsafe APIs within the operating system. However, Rust's stringent compile-time checks and ownership model significantly reduce the likelihood of common programming errors & vulnerabilities.
-
-The Windows Driver Kit (WDK) crate ecosystem provides essential tools that make driver development in Rust more accessible. With these crates, we can easily manage heap memory and utilize familiar Rust idioms like println!(). The maintainers of these crates have done a fantastic job bridging the gap between Rust and Windows kernel development.
+Rust is suited to operate in embedded and kernel environments through [libcore no_std](https://doc.rust-lang.org/core/), and with Microsoft's support for developing drivers in Rust, Rust comes up as an excellent candidate for a "safer" approach to driver development. I use "safer" in quotes because, despite Rust's safety guarantees, we still need to interact with unsafe APIs within the OS.
 
 ## Repo
 
