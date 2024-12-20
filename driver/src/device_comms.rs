@@ -1,7 +1,6 @@
-use core::{ffi::c_void, mem, ptr::null_mut, slice, sync::atomic::Ordering};
+use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 
-use alloc::{format, string::String, vec::Vec};
-use serde::{Deserialize, Serialize};
+use alloc::{format, string::String};
 use shared_no_std::{constants::SanctumVersion, driver_ipc::{ProcessStarted, ProcessTerminated}, ioctl::{DriverMessages, SancIoctlPing}};
 use wdk::println;
 use wdk_sys::{ntddk::{ExAcquireFastMutex, ExReleaseFastMutex, KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, FAST_MUTEX, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION};
@@ -38,20 +37,13 @@ impl DriverMessagesWithMutex {
     pub fn add_message_to_queue(&mut self, data: String)
      {
 
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql != 0 {
-            println!("[sanctum] [-] IRQL is not PASSIVE_LEVEL: {}", irql);
-            return;
-        }
+         let irql = unsafe { KeGetCurrentIrql() };
+         if irql > APC_LEVEL as u8 {
+             println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+             return;
+         }
 
         unsafe { ExAcquireFastMutex(&mut self.lock) };
-
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is not APIC_LEVEL: {}", irql);
-            unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-            return;
-        }
 
         self.is_empty = false;
         self.data.messages.push(data);
@@ -66,21 +58,15 @@ impl DriverMessagesWithMutex {
     /// until that point.
     pub fn add_process_creation_to_queue(&mut self, data: ProcessStarted)
      {
-
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql != 0 {
-            println!("[sanctum] [-] IRQL is not PASSIVE_LEVEL: {}", irql);
-            return;
-        }
+         
+         let irql = unsafe { KeGetCurrentIrql() };
+         if irql > APC_LEVEL as u8 {
+             println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
+             return;
+         }
 
         unsafe { ExAcquireFastMutex(&mut self.lock) };
 
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is not APIC_LEVEL: {}", irql);
-            unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-            return;
-        }
 
         self.is_empty = false;
         self.data.process_creations.push(data);
@@ -97,19 +83,13 @@ impl DriverMessagesWithMutex {
      {
 
         let irql = unsafe { KeGetCurrentIrql() };
-        if irql != 0 {
-            println!("[sanctum] [-] IRQL is not PASSIVE_LEVEL: {}", irql);
+        if irql > APC_LEVEL as u8 {
+            println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
             return;
         }
 
         unsafe { ExAcquireFastMutex(&mut self.lock) };
 
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is not APIC_LEVEL: {}", irql);
-            unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-            return;
-        }
 
         self.is_empty = false;
         self.data.process_terminations.push(data);
@@ -126,19 +106,13 @@ impl DriverMessagesWithMutex {
     fn extract_all(&mut self) -> Option<DriverMessages> {
 
         let irql = unsafe { KeGetCurrentIrql() };
-        if irql != 0 {
-            println!("[sanctum] [-] IRQL is not PASSIVE_LEVEL: {}", irql);
+        if irql > APC_LEVEL as u8 {
+            println!("[sanctum] [-] IRQL is above APIC_LEVEL: {}", irql);
             return None;
         }
 
         unsafe { ExAcquireFastMutex(&mut self.lock) };
 
-        let irql = unsafe { KeGetCurrentIrql() };
-        if irql > APC_LEVEL as u8 {
-            println!("[sanctum] [-] IRQL is not APIC_LEVEL: {}", irql);
-            unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-            return None;
-        }
 
         if self.is_empty {
             unsafe { ExReleaseFastMutex(&mut self.lock) }; 
