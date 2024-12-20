@@ -4,7 +4,7 @@ use shared_no_std::driver_ipc::ProcessStarted;
 use tokio::{sync::Mutex, time::sleep};
 use windows::Win32::{Foundation::{CloseHandle, GetLastError}, System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}};
 
-use crate::{usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}};
+use crate::{driver_manager::SanctumDriverManager, usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}};
 
 use super::process_monitor::ProcessMonitor;
 
@@ -37,7 +37,10 @@ impl Core {
     }
 
     /// Starts the core of the usermode engine; kicking off the frequent polling of the driver, and conducts relevant decision making
-    pub async fn start_core(&self, engine: Arc<UsermodeAPI>) -> ! {
+    pub async fn start_core(
+        &self, 
+        driver_manager: Arc<Mutex<SanctumDriverManager>>,
+    ) -> ! {
 
         let mut processes = ProcessMonitor::new();
 
@@ -61,8 +64,9 @@ impl Core {
         //
         loop {
             // contact the driver and get any messages from the kernel 
+            // todo needing to unlock the driver manager is an unnecessary bottleneck 
             let driver_response = {
-                let mut mtx = engine.driver_manager.lock().unwrap();
+                let mut mtx = driver_manager.lock().await;
                 mtx.ioctl_get_driver_messages()
             };
             

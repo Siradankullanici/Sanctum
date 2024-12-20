@@ -12,8 +12,8 @@ use std::{path::PathBuf, sync::Arc};
 use serde_json::{from_slice, to_value, to_vec, Value};
 use shared_no_std::{constants::PIPE_NAME, ipc::{CommandRequest, CommandResponse}};
 use shared_std::settings::SanctumSettings;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{PipeMode, ServerOptions}};
-use crate::{core::core::Core, filescanner::{self, FileScanner}, settings::SanctumSettingsImpl, usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}}; 
+use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{PipeMode, ServerOptions}, sync::Mutex};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, settings::SanctumSettingsImpl, usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}}; 
 
 /// An interface for the usermode IPC server
 pub struct UmIpc{}
@@ -23,7 +23,8 @@ impl UmIpc {
     pub async fn listen(
         engine: Arc<UsermodeAPI>, 
         core: Arc<Core>,
-        file_scanner: Arc<FileScanner>
+        file_scanner: Arc<FileScanner>,
+        driver_manager: Arc<Mutex<SanctumDriverManager>>,
     ) -> Result<(), Box<dyn std::error::Error>> {
         let logger = Log::new();
         logger.log(LogLevel::Info, &format!("Trying to start IPC server at {}...", PIPE_NAME));
@@ -50,6 +51,7 @@ impl UmIpc {
             let engine_clone = Arc::clone(&engine);
             let core_clone = Arc::clone(&core);
             let scanner_clone = Arc::clone(&file_scanner);
+            let drv_mgr_clone = Arc::clone(&driver_manager);
     
             tokio::spawn(async move {
                 let mut buffer = vec![0; 1024];
@@ -74,6 +76,7 @@ impl UmIpc {
                                     engine_clone, 
                                     core_clone,
                                     scanner_clone,
+                                    drv_mgr_clone,
                                 ).await {
                                     //
                                     // Serialise and send the response back to the client
@@ -122,6 +125,7 @@ pub async fn handle_ipc(
     engine_clone: Arc<UsermodeAPI>, 
     core: Arc<Core>,
     file_scanner: Arc<FileScanner>,
+    driver_manager: Arc<Mutex<SanctumDriverManager>>,
 ) -> Option<Value> {
     let response: Value = match request.command.as_str() {
 
@@ -180,19 +184,38 @@ pub async fn handle_ipc(
         // Driver control from GUI
         //
         "driver_install_driver" => {
-            to_value(engine_clone.driver_install_driver()).unwrap()
+            to_value({
+                let mut lock = driver_manager.lock().await;
+                lock.install_driver();
+                lock.get_state()
+            }).unwrap()
         },
         "driver_uninstall_driver" => {
-            to_value(engine_clone.driver_uninstall_driver()).unwrap()
+            to_value({
+                let mut lock = driver_manager.lock().await;
+                lock.uninstall_driver();
+                lock.get_state()
+            }).unwrap()
         },
         "driver_start_driver" => {
-            to_value(engine_clone.driver_start_driver()).unwrap()
+            to_value({
+                let mut lock = driver_manager.lock().await;
+                lock.start_driver();
+                lock.get_state()
+            }).unwrap()
         },
         "driver_stop_driver" => {
-            to_value(engine_clone.driver_stop_driver()).unwrap()
+            to_value({
+                let mut lock = driver_manager.lock().await;
+                lock.stop_driver();
+                lock.get_state()
+            }).unwrap()
         },
         "driver_get_state" => {
-            to_value(engine_clone.driver_get_state()).unwrap()
+            to_value({
+                let lock = driver_manager.lock().await;
+                lock.get_state()
+            }).unwrap()
         },
         
 
@@ -203,7 +226,10 @@ pub async fn handle_ipc(
         // as a demonstration incase I want to do it again in the future for some weird edge case.
         //
         "ioctl_ping_driver" => {
-            to_value(engine_clone.ioctl_ping_driver()).unwrap()
+            to_value({
+                let mut lock = driver_manager.lock().await;
+                lock.ioctl_ping_driver()
+            }).unwrap()
         },
         "driver_collect_knl_dbg_msg" => {
             to_value({
