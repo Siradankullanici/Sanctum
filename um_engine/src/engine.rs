@@ -1,8 +1,9 @@
 use std::sync::Arc;
 
+use shared_std::settings::SanctumSettings;
 use tokio::sync::Mutex;
 
-use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, usermode_api::UsermodeAPI, utils::log::Log};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, settings::SanctumSettingsImpl, utils::log::Log};
 
 /// Engine is the central driver and control point for the Sanctum EDR. It is responsible for
 /// managing the core features of the EDR, including:
@@ -36,18 +37,19 @@ impl Engine {
         let file_scanner = Arc::new(scanner.unwrap());
         let file_scanner_clone = Arc::clone(&file_scanner);
 
-        // GUI IPC receiver 
-        let usermode_api = Arc::new(UsermodeAPI::new().await);
-        let umapi_umipc = Arc::clone(&usermode_api);
-
         // driver manager
         // Happy the driver manager being wrapped in a mutex now; it isn't a high performance module and I
         // don't need necessarily to spend time refactoring that at the moment. The only place the mutex may
         // cause a bottleneck is when making IOCTL calls via SanctumDriverManager.
-        // todo review
+        // todo review - issue #50
         let driver_manager = Arc::new(Mutex::new(SanctumDriverManager::new()));
         let drv_mgr_for_umipc = Arc::clone(&driver_manager);
         let drv_mgr_for_core = Arc::clone(&driver_manager);
+
+        // settings - happy to leave as mutex for now, may refactor later to move the mutex deeper into the 
+        // call flow
+        let sanctum_settings = Arc::new(Mutex::new(SanctumSettings::load()));
+        let settings_clone = Arc::clone(&sanctum_settings);
 
         //
         // Spawn the core of the engine which will constantly talk to the driver and process any IO
@@ -65,7 +67,7 @@ impl Engine {
         // todo review this; can this state ever crash the app?
         let gui_ipc_handle = tokio::spawn(async move {
             let error = UmIpc::listen(
-                umapi_umipc, 
+                settings_clone, 
                 core_umipc,
                 file_scanner_clone,
                 drv_mgr_for_umipc,

@@ -7,7 +7,6 @@
 use engine::Engine;
 use utils::log::Log;
 
-mod usermode_api;
 mod driver_manager;
 mod strings;
 mod settings;

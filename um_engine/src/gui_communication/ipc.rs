@@ -12,8 +12,8 @@ use std::{path::PathBuf, sync::Arc};
 use serde_json::{from_slice, to_value, to_vec, Value};
 use shared_no_std::{constants::PIPE_NAME, ipc::{CommandRequest, CommandResponse}};
 use shared_std::settings::SanctumSettings;
-use tokio::{io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{PipeMode, ServerOptions}, sync::Mutex};
-use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, settings::SanctumSettingsImpl, usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}}; 
+use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{PipeMode, ServerOptions}, sync::Mutex};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, settings::{get_setting_paths, SanctumSettingsImpl}, utils::{env::get_logged_in_username, log::{Log, LogLevel}}}; 
 
 /// An interface for the usermode IPC server
 pub struct UmIpc{}
@@ -21,7 +21,7 @@ pub struct UmIpc{}
 impl UmIpc {
 
     pub async fn listen(
-        engine: Arc<UsermodeAPI>, 
+        settings: Arc<Mutex<SanctumSettings>>, 
         core: Arc<Core>,
         file_scanner: Arc<FileScanner>,
         driver_manager: Arc<Mutex<SanctumDriverManager>>,
@@ -48,7 +48,7 @@ impl UmIpc {
             let mut client = server;
             server = next_server;
     
-            let engine_clone = Arc::clone(&engine);
+            let settings_clone = Arc::clone(&settings);
             let core_clone = Arc::clone(&core);
             let scanner_clone = Arc::clone(&file_scanner);
             let drv_mgr_clone = Arc::clone(&driver_manager);
@@ -73,7 +73,7 @@ impl UmIpc {
                                 //
                                 if let Some(response) = handle_ipc(
                                     request, 
-                                    engine_clone, 
+                                    settings_clone, 
                                     core_clone,
                                     scanner_clone,
                                     drv_mgr_clone,
@@ -122,7 +122,7 @@ impl UmIpc {
 /// In the case of a Tokio IPC pipe, a response can be sent, in which case, it will be serialised to a Value and sent wrapped in a Some.
 pub async fn handle_ipc(
     request: CommandRequest, 
-    engine_clone: Arc<UsermodeAPI>, 
+    settings: Arc<Mutex<SanctumSettings>>, 
     core: Arc<Core>,
     file_scanner: Arc<FileScanner>,
     driver_manager: Arc<Mutex<SanctumDriverManager>>,
@@ -155,7 +155,10 @@ pub async fn handle_ipc(
             }
         },
         "settings_get_common_scan_areas" => {
-            to_value(engine_clone.settings_get_common_scan_areas()).unwrap()
+            to_value({
+                let lock = settings.lock().await;
+                lock.common_scan_areas.clone()
+            }).unwrap()
         }
 
 
@@ -163,14 +166,32 @@ pub async fn handle_ipc(
         // Settings control page
         //
         "settings_load_page_state" => {
-            let res = engine_clone.sanctum_settings.lock().unwrap().clone();
+            let res = settings.lock().await.clone();
             to_value(res).unwrap()
         },
         "settings_update_settings" => {
             if let Some(args) = request.args {
-                let settings: SanctumSettings = serde_json::from_value(args).unwrap();
-                engine_clone.sanctum_settings.lock().unwrap().update_settings(settings);
-                to_value("").unwrap()
+                let settings_local: SanctumSettings = serde_json::from_value(args).unwrap();
+                
+                {
+                    // change the live state
+                    let mut lock = settings.lock().await;
+                    *lock = settings_local.clone();
+                }
+
+            // write the new file
+            let settings_str = serde_json::to_string(&settings_local).unwrap();
+            let path = get_setting_paths(&get_logged_in_username().unwrap()).1;
+            let res = fs::write(path, settings_str).await;
+            match res {
+                Ok(_) => to_value("").unwrap(),
+                Err(e) => {
+                    to_value(CommandResponse {
+                        status: "error".to_string(),
+                        message: format!("Error saving settings. {}", e),
+                    }).unwrap()
+                },
+            }
             } else {
                 to_value(CommandResponse {
                     status: "error".to_string(),

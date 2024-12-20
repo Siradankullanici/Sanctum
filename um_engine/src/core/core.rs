@@ -4,7 +4,7 @@ use shared_no_std::driver_ipc::ProcessStarted;
 use tokio::{sync::Mutex, time::sleep};
 use windows::Win32::{Foundation::{CloseHandle, GetLastError}, System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}};
 
-use crate::{driver_manager::SanctumDriverManager, usermode_api::UsermodeAPI, utils::log::{Log, LogLevel}};
+use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
 use super::process_monitor::ProcessMonitor;
 
