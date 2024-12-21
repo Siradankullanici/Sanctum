@@ -34,6 +34,7 @@
         "PIRP",
         "POBJECT",
         "ppid",
+        "PREOP",
         "println",
         "PROCESSENTRY",
         "PSECURITY",

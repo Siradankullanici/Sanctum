@@ -10,7 +10,7 @@ extern crate alloc;
 #[cfg(not(test))]
 extern crate wdk_panic;
 
-use core::core_callback_notify_ps;
+use core::{core_callback_notify_ps, ProcessHandleCallback};
 use ::core::{ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 
 use alloc::{boxed::Box, format};
@@ -20,7 +20,7 @@ use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}
 use utils::{Log, LogLevel, ToU16Vec, ToUnicodeString};
 use wdk::{nt_success, println};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, PsSetCreateProcessNotifyRoutineEx}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, _IO_STACK_LOCATION
+    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObRegisterCallbacks, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, PsProcessType, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, PVOID, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
 };
 
 mod ffi;
@@ -32,10 +32,18 @@ use wdk_alloc::WdkAllocator;
 #[global_allocator]
 static GLOBAL_ALLOCATOR: WdkAllocator = WdkAllocator;
 
+//
+// STATICS
+// Not ideal; but as DriverEntry exists whilst the driver is still loaded in memory, lifetimes etc
+// wont ensure certain parts of memory isn't deallocated.
+//
+
 /// An atomic pointer to the DriverMessagesWithSpinLock struct so that it can be used anywhere in the 
 /// kernel.
 static DRIVER_MESSAGES: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
+
+static mut REGISTRATION_HANDLE: PVOID = null_mut();
 
 /// DriverEntry is required to start the driver, and acts as the main entrypoint
 /// for our driver.
@@ -128,21 +136,27 @@ pub unsafe extern "C" fn configure_driver(
     (*driver).MajorFunction[IRP_MJ_DEVICE_CONTROL as usize] = Some(handle_ioctl);
     (*driver).DriverUnload = Some(driver_exit);
 
+    let ph: Result<ProcessHandleCallback, i32> = ProcessHandleCallback::new();
+    if let Err(e) = ph {
+        return e
+    }
 
     //
     // Core callback functions for the EDR
     //
 
     // Intercepting process creation
-    println!("[sanctum] [i] About to register.....");
     let res = PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps), FALSE as u8);
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}.");
         return res;
     }
 
-    println!("[sanctum] [+] Done!");
+    // Requests for a handle
+    
 
+    // log.log(LogLevel::Success, "Registration done for handle interception.");
+    println!("Registration done for handle interception...");
 
     // Specifies the type of buffering that is used by the I/O manager for I/O requests that are sent to the device stack.
     (*device_object).Flags |= DO_BUFFERED_IO;
@@ -170,6 +184,12 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps), TRUE as u8) };
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Error removing PsSetCreateProcessNotifyRoutineEx from callback routines. Error: {res}");
+    }
+
+    unsafe {
+        if !REGISTRATION_HANDLE.is_null() {
+            ObUnRegisterCallbacks(REGISTRATION_HANDLE);
+        }
     }
 
     // drop the driver messages
