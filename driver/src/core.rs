@@ -4,12 +4,12 @@
 
 use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
 
-use alloc::vec::Vec;
+use alloc::{format, vec::Vec};
 use shared_no_std::driver_ipc::{ProcessStarted, ProcessTerminated};
 use wdk::println;
 use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, PVOID, STATUS_SUCCESS, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
 
-use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
+use crate::{utils::{unicode_to_string, Log}, DRIVER_MESSAGES, REGISTRATION_HANDLE};
 
 /// Callback function for a new process being created on the system.
 pub unsafe extern "C" fn core_callback_notify_ps(process: PEPROCESS, pid: HANDLE, created: *mut PS_CREATE_NOTIFY_INFO) {
@@ -121,9 +121,9 @@ impl ProcessHandleCallback {
 
 /// Callback function to handle process handle request,s 
 pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut OB_PRE_OPERATION_INFORMATION) -> OB_PREOP_CALLBACK_STATUS {
-    println!("Inside callback for handle. oi: {:?}", oi);
+    // println!("Inside callback for handle. oi: {:?}", oi);
 
-    // Check the pointer is valid before attempting to dereference it. We will return 1 as an error code
+    // Check the inbound pointer is valid before attempting to dereference it. We will return 1 as an error code
     if oi.is_null() {
         return 1
     }
@@ -131,9 +131,14 @@ pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut 
     let p_target_process = (*oi).Object as PEPROCESS;
     let target_pid = PsGetProcessId(p_target_process);
     let source_pid = PsGetCurrentProcessId();
-    
-    println!("PEPROCESS: {:?}, target: {}, source: {}", p_target_process, target_pid as u64, source_pid as u64);
 
+    let desired_access = (*(*oi).Parameters).CreateHandleInformation.DesiredAccess;
+    let og_desired_access = (*(*oi).Parameters).CreateHandleInformation.OriginalDesiredAccess;
+
+    // BUG this causes a buffer overflow of some description in some circumstances? to investigate 
+    // let log = Log::new();
+    // log.log_to_userland(format!("PEPROCESS: {:?}, target: {}, source: {}, og access: {}, desired: {}", p_target_process, target_pid as u64, source_pid as u64, og_desired_access, desired_access));
+    
     OB_PREOP_SUCCESS
 
 }

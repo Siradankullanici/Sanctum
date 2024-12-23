@@ -12,21 +12,23 @@ extern crate wdk_panic;
 
 use core::{core_callback_notify_ps, ProcessHandleCallback};
 use ::core::{ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
-
-use alloc::{boxed::Box, format};
+use alloc::{boxed::Box, format, string::String};
 use ffi::IoGetCurrentIrpStackLocation;
 use device_comms::{ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex};
+use mutex_test::multi_thread_test;
+use wdk_mutex::FastMutex;
 use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}, ioctl::{SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT}};
 use utils::{Log, LogLevel, ToU16Vec, ToUnicodeString};
 use wdk::{nt_success, println};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObRegisterCallbacks, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, PsProcessType, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, PVOID, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
+    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeGetCurrentIrql, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, PVOID, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, _IO_STACK_LOCATION
 };
 
 mod ffi;
 mod utils;
 mod device_comms;
 mod core;
+mod mutex_test;
 
 use wdk_alloc::WdkAllocator;
 #[global_allocator]
@@ -42,8 +44,13 @@ static GLOBAL_ALLOCATOR: WdkAllocator = WdkAllocator;
 /// kernel.
 static DRIVER_MESSAGES: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
+static DRIVER_CONTEXT_PTR: AtomicPtr<DeviceContext> = AtomicPtr::new(null_mut());
 
 static mut REGISTRATION_HANDLE: PVOID = null_mut();
+
+struct DeviceContext {
+    log_file_mutex: FastMutex<bool>,
+}
 
 /// DriverEntry is required to start the driver, and acts as the main entrypoint
 /// for our driver.
@@ -102,7 +109,7 @@ pub unsafe extern "C" fn configure_driver(
     
     let res = IoCreateDevice(
         driver,
-        0,
+        size_of::<DeviceContext>() as u32,
         &mut nt_name,
         FILE_DEVICE_UNKNOWN, // If a type of hardware does not match any of the defined types, specify a value of either FILE_DEVICE_UNKNOWN
         FILE_DEVICE_SECURE_OPEN,
@@ -114,7 +121,51 @@ pub unsafe extern "C" fn configure_driver(
         return res;
     }
 
+    println!("[i] before the mutexes, IRQL: {}", unsafe { KeGetCurrentIrql() });
+
+    // get the address of the device extension from the PDEVICE_OBJECT
+    let mut context_ptr = (*device_object).DeviceExtension;
+
+    // Heap allocate a new DeviceContext with a FastMutex
+    let device_context = Box::into_raw(Box::new(DeviceContext {
+        log_file_mutex: FastMutex::new(false).unwrap(),
+    }));
+    println!("[i] after ::new(), IRQL: {}", unsafe { KeGetCurrentIrql() });
+
+
+    // Save the pointer to the heap allocated device_context in the DeviceExtension field
+    // of our DEVICE_OBJECT
+    context_ptr = device_context as *mut _;
+
+    // store the device context in the global
+    DRIVER_CONTEXT_PTR.store(context_ptr as *mut _, Ordering::Relaxed);
+
+    {
+        let ctx = &*DRIVER_CONTEXT_PTR.load(Ordering::Relaxed);
+        let lock = ctx.log_file_mutex.lock().unwrap();
+        println!("Lock value: {}", *lock);
+    }
     
+    // println!("[i] after ::lock(), IRQL: {}", unsafe { KeGetCurrentIrql() });
+
+
+    // let second_mtx = FastMutex::new(String::from("Hello there")).unwrap();
+    // {
+    //     let mut second_lock = second_mtx.lock().unwrap();
+    //     println!("Before: {:?}", *second_lock);
+    //     *second_lock = String::from("test");
+    //     println!("After: {:?}", *second_lock);
+    // }
+    // {
+    //     let mut third_lock = second_mtx.lock().unwrap();
+    //     println!("Before: {:?}", *third_lock);
+    //     *third_lock = String::from("airplanes");
+    //     println!("After: {:?}", *third_lock);
+    // }
+
+    // multi_thread_test();
+    
+
     //
     // Create the symbolic link
     //

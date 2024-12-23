@@ -506,6 +506,7 @@ dependencies = [
  "wdk",
  "wdk-alloc",
  "wdk-build",
+ "wdk-mutex",
  "wdk-panic",
  "wdk-sys",
 ]
@@ -769,6 +770,17 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn",
+]
+
+[[package]]
+name = "wdk-mutex"
+version = "0.0.1"
+dependencies = [
+ "wdk",
+ "wdk-alloc",
+ "wdk-build",
+ "wdk-panic",
+ "wdk-sys",
 ]
 
 [[package]]
