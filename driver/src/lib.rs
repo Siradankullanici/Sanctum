@@ -48,8 +48,6 @@ static DRIVER_CONTEXT_PTR: AtomicPtr<DeviceContext> = AtomicPtr::new(null_mut())
 
 static REGISTRATION_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
-static DOS_STATIC: [u16; 15] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16, 'S' as u16, 'a' as u16, 'n' as u16, 'c' as u16, 't' as u16, 'u' as u16, 'm' as u16, 'E' as u16, 'D' as u16, 'R' as u16, 0u16];
-
 struct DeviceContext {
     log_file_mutex: FastMutex<bool>,
 }
@@ -213,8 +211,9 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
 
     // rm symbolic link
     let mut dos_name = UNICODE_STRING::default();
+    let dos_name_u16 = DOS_DEVICE_NAME.to_u16_vec();
     unsafe {
-        RtlInitUnicodeString(&mut dos_name, DOS_STATIC.as_ptr());
+        RtlInitUnicodeString(&mut dos_name, dos_name_u16.as_ptr());
     }
     let _ = unsafe { IoDeleteSymbolicLink(&mut dos_name) };
 
