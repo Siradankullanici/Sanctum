@@ -217,9 +217,12 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     }
     let _ = unsafe { IoDeleteSymbolicLink(&mut dos_name) };
 
+
     //
     // Unregister callback routines 
     //
+
+    // drop the callback for new process interception
     let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps), TRUE as u8) };
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Error removing PsSetCreateProcessNotifyRoutineEx from callback routines. Error: {res}");
