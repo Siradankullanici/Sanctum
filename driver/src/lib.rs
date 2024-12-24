@@ -225,6 +225,7 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
         println!("[sanctum] [-] Error removing PsSetCreateProcessNotifyRoutineEx from callback routines. Error: {res}");
     }
 
+    // drop the callback routines for process handle interception
     unsafe {
         if !REGISTRATION_HANDLE.load(Ordering::Relaxed).is_null() {
             ObUnRegisterCallbacks(REGISTRATION_HANDLE.load(Ordering::Relaxed));
