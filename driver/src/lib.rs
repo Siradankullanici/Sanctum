@@ -11,17 +11,17 @@ extern crate alloc;
 extern crate wdk_panic;
 
 use core::{core_callback_notify_ps, ProcessHandleCallback};
-use ::core::{ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
+use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::{boxed::Box, format, string::String};
 use ffi::IoGetCurrentIrpStackLocation;
 use device_comms::{ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex};
 use mutex_test::multi_thread_test;
 use wdk_mutex::FastMutex;
 use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}, ioctl::{SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT}};
-use utils::{Log, LogLevel, ToU16Vec, ToUnicodeString};
+use utils::{Log, LogLevel, ToU16Vec};
 use wdk::{nt_success, println};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeGetCurrentIrql, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, PVOID, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, _IO_STACK_LOCATION
+    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeGetCurrentIrql, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
 };
 
 mod ffi;
@@ -46,7 +46,9 @@ static DRIVER_MESSAGES: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null
 static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_CONTEXT_PTR: AtomicPtr<DeviceContext> = AtomicPtr::new(null_mut());
 
-static mut REGISTRATION_HANDLE: PVOID = null_mut();
+static REGISTRATION_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+
+static DOS_STATIC: [u16; 15] = ['\\' as u16, '?' as u16, '?' as u16, '\\' as u16, 'S' as u16, 'a' as u16, 'n' as u16, 'c' as u16, 't' as u16, 'u' as u16, 'm' as u16, 'E' as u16, 'D' as u16, 'R' as u16, 0u16];
 
 struct DeviceContext {
     log_file_mutex: FastMutex<bool>,
@@ -91,15 +93,16 @@ pub unsafe extern "C" fn configure_driver(
     log.log_to_userland(format!("Starting Sanctum driver... Version: {}", VERSION_DRIVER));
 
     //
-    // Configure the strings
+    // Configure the strings required for symbolic links and naming
     //
-    let mut dos_name = DOS_DEVICE_NAME
-        .to_unicode_string()
-        .expect("[sanctum] [-] unable to encode string to unicode.");
+    let mut dos_name = UNICODE_STRING::default();
+    let mut nt_name = UNICODE_STRING::default();
 
-    let mut nt_name = NT_DEVICE_NAME
-        .to_unicode_string()
-        .expect("[sanctum] [-] unable to encode string to unicode.");
+    let dos_name_u16 = DOS_DEVICE_NAME.to_u16_vec();
+    let device_name_u16 = NT_DEVICE_NAME.to_u16_vec();
+    
+    RtlInitUnicodeString(&mut dos_name, dos_name_u16.as_ptr());
+    RtlInitUnicodeString(&mut nt_name, device_name_u16.as_ptr());
 
 
     //
@@ -123,22 +126,13 @@ pub unsafe extern "C" fn configure_driver(
 
     println!("[i] before the mutexes, IRQL: {}", unsafe { KeGetCurrentIrql() });
 
-    // get the address of the device extension from the PDEVICE_OBJECT
-    let mut context_ptr = (*device_object).DeviceExtension;
-
-    // Heap allocate a new DeviceContext with a FastMutex
-    let device_context = Box::into_raw(Box::new(DeviceContext {
+    let device_extension = (*device_object).DeviceExtension as *mut DeviceContext;
+    (*device_extension) = DeviceContext {
         log_file_mutex: FastMutex::new(false).unwrap(),
-    }));
-    println!("[i] after ::new(), IRQL: {}", unsafe { KeGetCurrentIrql() });
-
-
-    // Save the pointer to the heap allocated device_context in the DeviceExtension field
-    // of our DEVICE_OBJECT
-    context_ptr = device_context as *mut _;
+    };
 
     // store the device context in the global
-    DRIVER_CONTEXT_PTR.store(context_ptr as *mut _, Ordering::Relaxed);
+    DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
 
     {
         let ctx = &*DRIVER_CONTEXT_PTR.load(Ordering::Relaxed);
@@ -146,22 +140,22 @@ pub unsafe extern "C" fn configure_driver(
         println!("Lock value: {}", *lock);
     }
     
-    // println!("[i] after ::lock(), IRQL: {}", unsafe { KeGetCurrentIrql() });
+    println!("[i] after ::lock(), IRQL: {}", unsafe { KeGetCurrentIrql() });
 
 
-    // let second_mtx = FastMutex::new(String::from("Hello there")).unwrap();
-    // {
-    //     let mut second_lock = second_mtx.lock().unwrap();
-    //     println!("Before: {:?}", *second_lock);
-    //     *second_lock = String::from("test");
-    //     println!("After: {:?}", *second_lock);
-    // }
-    // {
-    //     let mut third_lock = second_mtx.lock().unwrap();
-    //     println!("Before: {:?}", *third_lock);
-    //     *third_lock = String::from("airplanes");
-    //     println!("After: {:?}", *third_lock);
-    // }
+    let second_mtx = FastMutex::new(String::from("Hello there")).unwrap();
+    {
+        let mut second_lock = second_mtx.lock().unwrap();
+        println!("Before: {:?}", *second_lock);
+        *second_lock = String::from("test");
+        println!("After: {:?}", *second_lock);
+    }
+    {
+        let mut third_lock = second_mtx.lock().unwrap();
+        println!("Before: {:?}", *third_lock);
+        *third_lock = String::from("airplanes");
+        println!("After: {:?}", *third_lock);
+    }
 
     // multi_thread_test();
     
@@ -179,18 +173,14 @@ pub unsafe extern "C" fn configure_driver(
 
 
     //
-    // Configure the drivers callbacks
+    // Configure the drivers general callbacks
     //
     (*driver).MajorFunction[IRP_MJ_CREATE as usize] = Some(sanctum_create_close); // todo can authenticate requests coming from x
     (*driver).MajorFunction[IRP_MJ_CLOSE as usize] = Some(sanctum_create_close);
     // (*driver).MajorFunction[IRP_MJ_WRITE as usize] = Some(handle_ioctl);
     (*driver).MajorFunction[IRP_MJ_DEVICE_CONTROL as usize] = Some(handle_ioctl);
     (*driver).DriverUnload = Some(driver_exit);
-
-    let ph: Result<ProcessHandleCallback, i32> = ProcessHandleCallback::new();
-    if let Err(e) = ph {
-        return e
-    }
+    
 
     //
     // Core callback functions for the EDR
@@ -204,10 +194,9 @@ pub unsafe extern "C" fn configure_driver(
     }
 
     // Requests for a handle
-    
-
-    // log.log(LogLevel::Success, "Registration done for handle interception.");
-    println!("Registration done for handle interception...");
+    if let Err(e) = ProcessHandleCallback::register_callback() {
+        return e;
+    }
 
     // Specifies the type of buffering that is used by the I/O manager for I/O requests that are sent to the device stack.
     (*device_object).Flags |= DO_BUFFERED_IO;
@@ -223,11 +212,11 @@ pub unsafe extern "C" fn configure_driver(
 extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
 
     // rm symbolic link
-    let mut device_name = DOS_DEVICE_NAME
-        .to_u16_vec()
-        .to_unicode_string()
-        .expect("[sanctum] [-] unable to encode string to unicode.");
-    let _ = unsafe { IoDeleteSymbolicLink(&mut device_name) };
+    let mut dos_name = UNICODE_STRING::default();
+    unsafe {
+        RtlInitUnicodeString(&mut dos_name, DOS_STATIC.as_ptr());
+    }
+    let _ = unsafe { IoDeleteSymbolicLink(&mut dos_name) };
 
     //
     // Unregister callback routines 
@@ -238,15 +227,23 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     }
 
     unsafe {
-        if !REGISTRATION_HANDLE.is_null() {
-            ObUnRegisterCallbacks(REGISTRATION_HANDLE);
+        if !REGISTRATION_HANDLE.load(Ordering::Relaxed).is_null() {
+            ObUnRegisterCallbacks(REGISTRATION_HANDLE.load(Ordering::Relaxed));
+            REGISTRATION_HANDLE.store(null_mut(), Ordering::Relaxed);
         }
     }
 
     // drop the driver messages
     let ptr = DRIVER_MESSAGES.swap(null_mut(), Ordering::SeqCst);
     if !ptr.is_null() {
-        // allow rust to clean up the memory
+        unsafe {
+            let _ = Box::from_raw(ptr);
+        }
+    }
+
+    // drop the message cache
+    let ptr = DRIVER_MESSAGES_CACHE.swap(null_mut(), Ordering::SeqCst);
+    if !ptr.is_null() {
         unsafe {
             let _ = Box::from_raw(ptr);
         }

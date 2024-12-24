@@ -7,9 +7,9 @@ use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
 use alloc::{format, vec::Vec};
 use shared_no_std::driver_ipc::{ProcessStarted, ProcessTerminated};
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, PVOID, STATUS_SUCCESS, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, PVOID, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
 
-use crate::{utils::{unicode_to_string, Log}, DRIVER_MESSAGES, REGISTRATION_HANDLE};
+use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
 
 /// Callback function for a new process being created on the system.
 pub unsafe extern "C" fn core_callback_notify_ps(process: PEPROCESS, pid: HANDLE, created: *mut PS_CREATE_NOTIFY_INFO) {
@@ -70,13 +70,12 @@ pub unsafe extern "C" fn core_callback_notify_ps(process: PEPROCESS, pid: HANDLE
     }
 }
 
-pub struct ProcessHandleCallback {
-    handle: PVOID,
-}
+pub struct ProcessHandleCallback {}
 
 impl ProcessHandleCallback {
-    pub fn new() -> Result<Self, NTSTATUS> {
+    pub fn register_callback() -> Result<(), NTSTATUS> {
 
+        // IRQL <= APC_LEVEL required for ObRegisterCallbacks
         let irql = unsafe { KeGetCurrentIrql() };
         if irql as u32 > APC_LEVEL {
             return Err(1)
@@ -96,31 +95,31 @@ impl ProcessHandleCallback {
         operation_registration.Operations = OB_OPERATION_HANDLE_CREATE | OB_OPERATION_HANDLE_DUPLICATE;
         operation_registration.PreOperation = Some(pre_process_handle_callback);
 
-        // assign to the callback registration
+        // // assign to the callback registration
         callback_registration.Altitude = altitude;
         callback_registration.Version = OB_FLT_REGISTRATION_VERSION as u16;
         callback_registration.OperationRegistrationCount = 1;
         callback_registration.RegistrationContext = null_mut();
         callback_registration.OperationRegistration = &mut operation_registration;
 
-        let status = unsafe {ObRegisterCallbacks(&mut callback_registration, &raw mut REGISTRATION_HANDLE)};
+        let mut reg_handle: *mut c_void = null_mut();
+
+        let status = unsafe {ObRegisterCallbacks(&mut callback_registration,  &mut reg_handle)};
         if status != STATUS_SUCCESS {
             println!("[sanctum] [-] Unable to register callback for handle interception. Failed with code: {status}.");
-            return Err(status);
+            return Err(STATUS_UNSUCCESSFUL);
         }
+        REGISTRATION_HANDLE.store(reg_handle as *mut _, Ordering::Relaxed);
 
-        Ok(
-            unsafe {
-                ProcessHandleCallback {
-                    handle: REGISTRATION_HANDLE,
-                }
-            }
-        )
+        Ok(())
     }
 }
 
 /// Callback function to handle process handle request,s 
 pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut OB_PRE_OPERATION_INFORMATION) -> OB_PREOP_CALLBACK_STATUS {
+    
+    // todo pick up from here after thread testing
+
     // println!("Inside callback for handle. oi: {:?}", oi);
 
     // Check the inbound pointer is valid before attempting to dereference it. We will return 1 as an error code
