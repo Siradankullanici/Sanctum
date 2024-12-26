@@ -777,9 +777,6 @@ name = "wdk-mutex"
 version = "0.0.1"
 dependencies = [
  "wdk",
- "wdk-alloc",
- "wdk-build",
- "wdk-panic",
  "wdk-sys",
 ]
 

@@ -57,6 +57,7 @@
         "umipc",
         "uncategorized",
         "Uninit",
-        "usermode"
+        "usermode",
+        "WORKITEM"
     ]
 }

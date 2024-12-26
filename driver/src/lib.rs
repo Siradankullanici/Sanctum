@@ -12,14 +12,14 @@ extern crate wdk_panic;
 
 use core::{core_callback_notify_ps, ProcessHandleCallback};
 use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
-use alloc::{boxed::Box, format, string::String};
+use alloc::{boxed::Box, format};
 use ffi::IoGetCurrentIrpStackLocation;
 use device_comms::{ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex};
-use mutex_test::multi_thread_test;
-use wdk_mutex::FastMutex;
+use mutex_test::{test_multithread_mutex, HEAP_MTX_PTR};
 use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}, ioctl::{SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT}};
 use utils::{Log, LogLevel, ToU16Vec};
 use wdk::{nt_success, println};
+use wdk_mutex::kmutex::KMutex;
 use wdk_sys::{
     ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeGetCurrentIrql, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
 };
@@ -45,11 +45,11 @@ static GLOBAL_ALLOCATOR: WdkAllocator = WdkAllocator;
 static DRIVER_MESSAGES: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_CONTEXT_PTR: AtomicPtr<DeviceContext> = AtomicPtr::new(null_mut());
-
 static REGISTRATION_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+static AP_DEVICE_OBJECT: AtomicPtr<DEVICE_OBJECT> = AtomicPtr::new(null_mut());
 
 struct DeviceContext {
-    log_file_mutex: FastMutex<bool>,
+    log_file_mutex: KMutex<u32>,
 }
 
 /// DriverEntry is required to start the driver, and acts as the main entrypoint
@@ -122,40 +122,19 @@ pub unsafe extern "C" fn configure_driver(
         return res;
     }
 
-    println!("[i] before the mutexes, IRQL: {}", unsafe { KeGetCurrentIrql() });
+    // store a global pointer to the device object
+    // AP_DEVICE_OBJECT.store(device_object, Ordering::Relaxed);
 
-    let device_extension = (*device_object).DeviceExtension as *mut DeviceContext;
-    (*device_extension) = DeviceContext {
-        log_file_mutex: FastMutex::new(false).unwrap(),
-    };
+    // let device_extension = (*device_object).DeviceExtension as *mut DeviceContext;
+    // (*device_extension) = DeviceContext {
+    //     log_file_mutex: KMutex::new(0u32).unwrap(),
+    // };
 
-    // store the device context in the global
-    DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
-
-    {
-        let ctx = &*DRIVER_CONTEXT_PTR.load(Ordering::Relaxed);
-        let lock = ctx.log_file_mutex.lock().unwrap();
-        println!("Lock value: {}", *lock);
-    }
-    
-    println!("[i] after ::lock(), IRQL: {}", unsafe { KeGetCurrentIrql() });
+    // // store the device context in the global
+    // DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
 
 
-    let second_mtx = FastMutex::new(String::from("Hello there")).unwrap();
-    {
-        let mut second_lock = second_mtx.lock().unwrap();
-        println!("Before: {:?}", *second_lock);
-        *second_lock = String::from("test");
-        println!("After: {:?}", *second_lock);
-    }
-    {
-        let mut third_lock = second_mtx.lock().unwrap();
-        println!("Before: {:?}", *third_lock);
-        *third_lock = String::from("airplanes");
-        println!("After: {:?}", *third_lock);
-    }
-
-    // multi_thread_test();
+    test_multithread_mutex();
     
 
     //
@@ -202,6 +181,7 @@ pub unsafe extern "C" fn configure_driver(
     STATUS_SUCCESS
 }
 
+
 /// Driver unload functions when it is to exit.
 ///
 /// # Safety
@@ -237,12 +217,20 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     }
 
     // drop the driver messages
-    let ptr = DRIVER_MESSAGES.swap(null_mut(), Ordering::SeqCst);
+    let ptr = DRIVER_MESSAGES.load(Ordering::SeqCst);
     if !ptr.is_null() {
         unsafe {
             let _ = Box::from_raw(ptr);
         }
     }
+
+    let ptr: *mut KMutex<u32> = HEAP_MTX_PTR.load(Ordering::SeqCst);
+    if !ptr.is_null() {
+        unsafe {
+            let _ = Box::from_raw(ptr);
+        }
+    }
+    
 
     // drop the message cache
     let ptr = DRIVER_MESSAGES_CACHE.swap(null_mut(), Ordering::SeqCst);

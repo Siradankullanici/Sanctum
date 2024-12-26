@@ -1,32 +1,46 @@
-use core::{ffi::c_void, ptr::null_mut, sync::atomic::AtomicPtr};
+use core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::boxed::Box;
 use wdk::println;
-use wdk_mutex::FastMutex;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, KeWaitForSingleObject, PsCreateSystemThread}, CLIENT_ID, FALSE, HANDLE, OBJECT_ATTRIBUTES, PASSIVE_LEVEL, STATUS_SUCCESS, _KWAIT_REASON::Executive, _MODE::KernelMode};
+use wdk_mutex::kmutex::KMutex;
+use wdk_sys::{ntddk::PsCreateSystemThread, CLIENT_ID, HANDLE, OBJECT_ATTRIBUTES};
+
 
 extern crate alloc;
 
-static INT_PTR: AtomicPtr<FastMutex<i32>> = AtomicPtr::new(null_mut());
+pub static HEAP_MTX_PTR: AtomicPtr<KMutex<u32>> = AtomicPtr::new(null_mut());
 
-pub fn multi_thread_test() {
+pub fn test_multithread_mutex() {
 
-    let my_int_mutex = Box::into_raw(Box::new(
-        FastMutex::new(0i32).unwrap()
-    ));
+    //
+    // inline mutex on same thread
+    //
 
-    INT_PTR.store(my_int_mutex, core::sync::atomic::Ordering::Relaxed);
+    let mtx = KMutex::new(12u32).unwrap();
+    let lock = mtx.lock().unwrap();
+    println!("The value is: {}", lock);
 
-    let mut thread_handles: [HANDLE; 2] = [
-        null_mut(),
-        null_mut(),
-    ];
+    //
+    // Prepare global static for access in multiple threads.
+    //
 
-    if unsafe { KeGetCurrentIrql() } != PASSIVE_LEVEL as u8 {
-        println!("[-] IRQL invalid. Set at: {}", unsafe { KeGetCurrentIrql() });
-        return;
+    let heap_mtx = Box::new(KMutex::new(0u32).unwrap());
+    let heap_mtx_ptr = Box::into_raw(heap_mtx);
+    HEAP_MTX_PTR.store(heap_mtx_ptr, Ordering::SeqCst);
+    println!("After mutex stuff");
+
+    let p = HEAP_MTX_PTR.load(Ordering::SeqCst);
+    if !p.is_null() {
+        let p = unsafe { &*p };
+        let mut lock = p.lock().unwrap();
+        println!("Got the lock before change! {}", *lock);
+        *lock += 1;
+        println!("After the change: {}", *lock);
     }
-
-    for i in 0..2 {
+    
+    //
+    // spawn x threads to test
+    //
+    for _ in 0..3 {
         let mut thread_handle: HANDLE = null_mut();
 
         let status = unsafe {
@@ -40,37 +54,25 @@ pub fn multi_thread_test() {
                 null_mut(),
             )
         };
-        assert_eq!(status, STATUS_SUCCESS);
-        thread_handles[i] = thread_handle;
+
+        println!("[i] Thread status: {status}");
     }
-
-    println!("IRQL From main thread: {}", unsafe {
-        KeGetCurrentIrql()
-    });
-
-    // for handle in &thread_handles {
-    //     unsafe {
-    //         let _ = KeWaitForSingleObject(
-    //             *handle, 
-    //             Executive, 
-    //             KernelMode as i8, 
-    //             FALSE as u8, 
-    //             null_mut(),
-    //         );
-    //     }
-    // }
-
 }
 
-unsafe extern "C" fn callback_fn(_: *mut c_void) {
-    println!("IRQL From spawned thread: {}", unsafe {
-        KeGetCurrentIrql()
-    });
-    let ptr_mutex = &*INT_PTR.load(core::sync::atomic::Ordering::Relaxed);
 
-    for i in 0..10 {
-        let mut mtx = ptr_mutex.lock().unwrap();
-        *mtx += 1;
-        println!("i = {i}, mutex val = {}", *mtx);
+unsafe extern "C" fn callback_fn(_: *mut c_void) {
+    for _ in 0..1500 {
+        let p = HEAP_MTX_PTR.load(Ordering::SeqCst);
+        if !p.is_null() {
+            let p = unsafe { &*p };
+            let mut lock = p.lock().unwrap();
+            // println!("Got the lock before change! {}", *lock);
+            *lock += 1;
+            println!("After the change: {}", *lock);
+        }
     }
+
+    // Proof of threads acting concurrently; if these printed after x iterations from the for loop, that
+    // would indicate that it is not running concurrently. 
+    println!("THREAD FINISHED.");
 }
