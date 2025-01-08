@@ -15,20 +15,18 @@ use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::{boxed::Box, format};
 use ffi::IoGetCurrentIrpStackLocation;
 use device_comms::{ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex};
-use mutex_test::{test_multithread_mutex, HEAP_MTX_PTR};
 use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}, ioctl::{SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT}};
 use utils::{Log, LogLevel, ToU16Vec};
 use wdk::{nt_success, println};
-use wdk_mutex::kmutex::KMutex;
+use wdk_mutex::{grt::Grt, kmutex::KMutex};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeGetCurrentIrql, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
+    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObUnRegisterCallbacks, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
 };
 
 mod ffi;
 mod utils;
 mod device_comms;
 mod core;
-mod mutex_test;
 
 use wdk_alloc::WdkAllocator;
 #[global_allocator]
@@ -60,6 +58,11 @@ pub unsafe extern "system" fn driver_entry(
     registry_path: PCUNICODE_STRING,
 ) -> NTSTATUS {
     println!("[sanctum] [i] Starting Sanctum driver... Version: {}", VERSION_DRIVER);
+
+    if let Err(e) = Grt::init() {
+        println!("Error creating Grt!: {:?}", e);
+        return STATUS_UNSUCCESSFUL;
+    }
 
     let status = configure_driver(driver, registry_path as *mut _);
 
@@ -132,9 +135,6 @@ pub unsafe extern "C" fn configure_driver(
 
     // // store the device context in the global
     // DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
-
-
-    test_multithread_mutex();
     
 
     //
@@ -224,20 +224,16 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
         }
     }
 
-    let ptr: *mut KMutex<u32> = HEAP_MTX_PTR.load(Ordering::SeqCst);
-    if !ptr.is_null() {
-        unsafe {
-            let _ = Box::from_raw(ptr);
-        }
-    }
-    
-
     // drop the message cache
     let ptr = DRIVER_MESSAGES_CACHE.swap(null_mut(), Ordering::SeqCst);
     if !ptr.is_null() {
         unsafe {
             let _ = Box::from_raw(ptr);
         }
+    }
+    
+    if let Err(e) = unsafe { Grt::destroy() } {
+        println!("Error destroying: {:?}", e);
     }
 
     // delete the device

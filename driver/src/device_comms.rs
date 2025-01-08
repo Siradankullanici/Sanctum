@@ -3,25 +3,27 @@ use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 use alloc::{format, string::String};
 use shared_no_std::{constants::SanctumVersion, driver_ipc::{ProcessStarted, ProcessTerminated}, ioctl::{DriverMessages, SancIoctlPing}};
 use wdk::println;
-use wdk_sys::{ntddk::{ExAcquireFastMutex, ExReleaseFastMutex, KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, FAST_MUTEX, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION};
-use crate::{ffi::ExInitializeFastMutex, utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION};
+use crate::{utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE};
+use wdk_mutex::fast_mutex::FastMutex;
 
 /// DriverMessagesWithMutex object which contains a spinlock to allow for mutable access to the queue.
 /// This object should be used to safely manage access to the inner DriverMessages which contains 
 /// the actual data. The DriverMessagesWithMutex contains metadata + the DriverMessages.
 pub struct DriverMessagesWithMutex {
-    lock: FAST_MUTEX,
-    is_empty: bool,
-    data: DriverMessages,
+    data: FastMutex<DriverMessages>,
 }
 
 impl Default for DriverMessagesWithMutex {
     fn default() -> Self {
-        let mut mutex = FAST_MUTEX::default();
-        unsafe { ExInitializeFastMutex(&mut mutex) };
-        let data = DriverMessages::default();
+        let data = FastMutex::new(DriverMessages::default()).unwrap();
 
-        DriverMessagesWithMutex { lock: mutex, is_empty: true, data }
+        {
+            let mut lock = data.lock().unwrap();
+            lock.is_empty = true;
+        }
+
+        DriverMessagesWithMutex { data }
     }
 }
 
@@ -43,12 +45,11 @@ impl DriverMessagesWithMutex {
              return;
          }
 
-        unsafe { ExAcquireFastMutex(&mut self.lock) };
-
-        self.is_empty = false;
-        self.data.messages.push(data);
-
-        unsafe { ExReleaseFastMutex(&mut self.lock) }; 
+         {
+            let mut lock = self.data.lock().unwrap();
+            lock.is_empty = false;
+            lock.messages.push(data);
+         }
     }
 
 
@@ -65,13 +66,11 @@ impl DriverMessagesWithMutex {
              return;
          }
 
-        unsafe { ExAcquireFastMutex(&mut self.lock) };
-
-
-        self.is_empty = false;
-        self.data.process_creations.push(data);
-        
-        unsafe { ExReleaseFastMutex(&mut self.lock) }; 
+         {
+            let mut lock = self.data.lock().unwrap();
+            lock.is_empty = false;
+            lock.process_creations.push(data);
+         }
     }
 
 
@@ -88,13 +87,12 @@ impl DriverMessagesWithMutex {
             return;
         }
 
-        unsafe { ExAcquireFastMutex(&mut self.lock) };
+        {
+            let mut lock = self.data.lock().unwrap();
+            lock.is_empty = false;
+            lock.process_terminations.push(data);
+        }
 
-
-        self.is_empty = false;
-        self.data.process_terminations.push(data);
-        
-        unsafe { ExReleaseFastMutex(&mut self.lock) }; 
     }
 
 
@@ -111,41 +109,40 @@ impl DriverMessagesWithMutex {
             return None;
         }
 
-        unsafe { ExAcquireFastMutex(&mut self.lock) };
+        {
+            let mut lock = self.data.lock().unwrap();
+            if lock.is_empty {
+                return None;
+            }
 
+            //
+            // Using mem::take now seems safe against kernel panics; we were having some issues
+            // previous with this, leading to IRQL_NOT_LESS_OR_EQUAL bsod. That was likely a programming
+            // error as opposed to a safety error with mem::take. If further bsod's occur around mem::take,
+            // try swapping to mem::swap; however, the core functionality of both should be the same.
+            //
+            let extracted_data = mem::take(&mut *lock);
 
-        if self.is_empty {
-            unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-            return None;
+            lock.is_empty = true; // reset flag
+            return Some(extracted_data);
         }
-        
-        //
-        // Using mem::take now seems safe against kernel panics; we were having some issues
-        // previous with this, leading to IRQL_NOT_LESS_OR_EQUAL bsod. That was likely a programming
-        // error as opposed to a safety error with mem::take. If further bsod's occur around mem::take,
-        // try swapping to mem::swap; however, the core functionality of both should be the same.
-        //
-        let extracted_data = mem::take(&mut self.data);
-
-        self.is_empty = true; // reset flag
-
-        unsafe { ExReleaseFastMutex(&mut self.lock) }; 
-
-        Some(extracted_data)
     }
 
 
     fn add_existing_queue(&mut self, q: &mut DriverMessages) -> usize {
 
-        self.is_empty = false;
-        self.data.messages.append(&mut q.messages);
-        self.data.process_creations.append(&mut q.process_creations);
-        self.data.process_terminations.append(&mut q.process_terminations);
+        let mut lock = self.data.lock().unwrap();
+
+        lock.is_empty = false;
+        lock.messages.append(&mut q.messages);
+        lock.process_creations.append(&mut q.process_creations);
+        lock.process_terminations.append(&mut q.process_terminations);
 
         let tmp = serde_json::to_vec(&DriverMessages{
-            messages: self.data.messages.clone(),
-            process_creations: self.data.process_creations.clone(),
-            process_terminations: self.data.process_terminations.clone(),
+            messages: lock.messages.clone(),
+            process_creations: lock.process_creations.clone(),
+            process_terminations: lock.process_terminations.clone(),
+            is_empty: false,
         });
 
         let len = match tmp {

@@ -83,6 +83,7 @@ impl Default for SancIoctlPing<> {
 /// serde_json::to_vec in `add_existing_queue` for the data to properly be sent to userland.
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct DriverMessages {
+    pub is_empty: bool,
     pub messages: alloc::vec::Vec<alloc::string::String>,
     pub process_creations: alloc::vec::Vec<ProcessStarted>,
     pub process_terminations: alloc::vec::Vec<ProcessTerminated>,
