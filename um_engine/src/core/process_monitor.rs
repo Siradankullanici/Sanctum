@@ -1,6 +1,9 @@
 use std::collections::HashMap;
 
+use serde::{Deserialize, Serialize};
 use shared_no_std::driver_ipc::ProcessStarted;
+use shared_std::processes::Process;
+use tokio::sync::RwLock;
 
 use crate::utils::log::Log;
 
@@ -10,7 +13,7 @@ use crate::utils::log::Log;
 /// 
 /// The key of processes hashmap is the pid, which is duplicated inside the Process
 /// struct.
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub struct ProcessMonitor {
     processes: HashMap<u64, Process>
 }
@@ -20,18 +23,6 @@ pub enum ProcessErrors {
     DuplicatePid,
 }
 
-/// The Process is a structural representation of an individual process thats
-/// running on the host machine, and keeping track of risk scores, and activity conducted
-/// by processes. 
-#[derive(Debug)]
-pub struct Process {
-    pid: u64,
-    process_image: String,
-    commandline_args: String,
-    risk_score: u8,
-    allow_listed: bool, // whether the application is allowed to exist without monitoring
-    sanctum_protected_process: bool, // scc (sanctum protected process) defines processes which require additional protections from access / abuse, such as lsass.exe.
-}
 
 impl ProcessMonitor {
     pub fn new() -> Self {
@@ -41,7 +32,7 @@ impl ProcessMonitor {
     }
 
     /// todo more fn comments
-    pub fn insert(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
+    pub async fn insert(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
         //
         // First check we aren't inserting a duplicate PID, this may happen if we haven't received
         // a notification that a process has been terminated; or that we have a new process queued to
@@ -49,8 +40,8 @@ impl ProcessMonitor {
         // todo this can be solved by first batch running deletes, before running updates.
         //
 
-        let entry = self.processes.get(&proc.pid);
-        if entry.is_some() {
+        let e = self.processes.get(&proc.pid);
+        if e.is_some() {
             return Err(ProcessErrors::DuplicatePid);
         }
 
@@ -66,7 +57,7 @@ impl ProcessMonitor {
         Ok(())
     }
 
-    pub fn remove_process(&mut self, pid: u64) {
+    pub async fn remove_process(&mut self, pid: u64) {
         self.processes.remove(&pid);
     }
 
@@ -76,5 +67,15 @@ impl ProcessMonitor {
 
         let logger = Log::new();
         logger.log(crate::utils::log::LogLevel::Info, &format!("Discovered {} running processes on startup.", self.processes.len()));
+    }
+
+
+    /// Query a given process by its Pid, returning information about the process
+    pub fn query_process_by_pid(&self, pid: u64) -> Option<Process> {
+        if let Some(process) = self.processes.get(&pid) {
+            return Some(process.clone());
+        } else {
+            return None;
+        }
     }
 }

@@ -238,6 +238,38 @@ pub async fn handle_ipc(
                 lock.get_state()
             }).unwrap()
         },
+
+
+        //
+        // Processes page in driver
+        //
+        "process_query_pid" => {
+            if let Some(args) = request.args {
+                let pid: String = serde_json::from_value(args).unwrap();
+                let pid = pid.parse::<u64>();
+                if let Ok(pid) = pid {
+                    let res = core.query_process_by_pid(pid).await;
+                    if res.is_none() {
+                        to_value(CommandResponse {
+                            status: "error".to_string(),
+                            message: format!("Could not find process from pid: {pid}."),
+                        }).unwrap()
+                    } else {
+                        to_value(res.unwrap()).unwrap()
+                    }
+                } else {
+                    to_value(CommandResponse {
+                        status: "error".to_string(),
+                        message: "Invalid PID received".to_string(),
+                    }).unwrap()
+                }
+            } else {
+                to_value(CommandResponse {
+                    status: "error".to_string(),
+                    message: "No pid received".to_string(),
+                }).unwrap()
+            }
+        }
         
 
 
