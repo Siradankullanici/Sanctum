@@ -1612,6 +1612,13 @@ dependencies = [
 ]
 
 [[package]]
+name = "injected_dll"
+version = "0.1.0"
+dependencies = [
+ "windows 0.59.0",
+]
+
+[[package]]
 name = "ipnet"
 version = "2.10.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
