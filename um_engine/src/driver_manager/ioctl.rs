@@ -156,11 +156,6 @@ impl SanctumDriverManager {
             // try 1 more time
             self.init_handle_via_registry();
             if self.handle_via_path.handle.is_none() {
-                // self.log.log(LogLevel::Warning, &format!(
-                //     "[-] Handle to the driver is not initialised; please ensure you have started / installed the service. \
-                //     Unable to pass IOCTL. Handle: {:?}", 
-                //     self.handle_via_path.handle
-                // ));
                 return None;
             }
         }
@@ -232,8 +227,6 @@ impl SanctumDriverManager {
                 return None;
             },
         };
-
-        self.log.log(LogLevel::Success, &format!("Messages from driver: {:?}", response_serialised));
 
         Some(response_serialised)
 

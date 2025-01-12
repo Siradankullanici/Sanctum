@@ -1,7 +1,7 @@
 use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 
 use alloc::{format, string::String};
-use shared_no_std::{constants::SanctumVersion, driver_ipc::{ProcessStarted, ProcessTerminated}, ioctl::{DriverMessages, SancIoctlPing}};
+use shared_no_std::{constants::SanctumVersion, driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated}, ioctl::{DriverMessages, SancIoctlPing}};
 use wdk::println;
 use wdk_sys::{ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION};
 use crate::{utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE};
@@ -95,6 +95,23 @@ impl DriverMessagesWithMutex {
 
     }
 
+    /// Add new granted handle information to the messages object
+    pub fn add_process_handle_to_queue(&mut self, data: HandleObtained)
+     {
+         
+         let irql = unsafe { KeGetCurrentIrql() };
+         if irql > APC_LEVEL as u8 {
+             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
+             return;
+         }
+
+         {
+            let mut lock = self.data.lock().unwrap();
+            lock.is_empty = false;
+            lock.handles.push(data);
+         }
+    }
+
 
     /// Extract all data out of the queue if there is data.
     /// 
@@ -137,11 +154,15 @@ impl DriverMessagesWithMutex {
         lock.messages.append(&mut q.messages);
         lock.process_creations.append(&mut q.process_creations);
         lock.process_terminations.append(&mut q.process_terminations);
+        lock.handles.append(&mut q.handles);
 
+        // IMPORTANT NOTE: As well as adding a new field to the below (compile time checked) you ALSO must
+        // add the field to the above append instructions.
         let tmp = serde_json::to_vec(&DriverMessages{
             messages: lock.messages.clone(),
             process_creations: lock.process_creations.clone(),
             process_terminations: lock.process_terminations.clone(),
+            handles: lock.handles.clone(),
             is_empty: false,
         });
 

@@ -16,3 +16,12 @@ pub struct ProcessStarted {
 pub struct ProcessTerminated {
     pub pid: u64,
 }
+
+#[derive(Debug, Serialize, Deserialize, Clone)]
+pub struct HandleObtained {
+    pub source_pid: u64,
+    pub dest_pid: u64,
+    pub rights_desired: u32,
+    pub rights_given: u32,
+}
+

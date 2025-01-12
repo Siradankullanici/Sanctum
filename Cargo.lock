@@ -4038,7 +4038,7 @@ dependencies = [
  "shared_no_std",
  "shared_std",
  "tokio",
- "windows 0.58.0",
+ "windows 0.59.0",
 ]
 
 [[package]]

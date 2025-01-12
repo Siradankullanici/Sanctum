@@ -1,9 +1,8 @@
 use std::collections::HashMap;
 
-use serde::{Deserialize, Serialize};
 use shared_no_std::driver_ipc::ProcessStarted;
 use shared_std::processes::Process;
-use tokio::sync::RwLock;
+use windows::Win32::{Storage::FileSystem::{DELETE, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER}, System::Threading::{PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}};
 
 use crate::utils::log::Log;
 
@@ -77,5 +76,92 @@ impl ProcessMonitor {
         } else {
             return None;
         }
+    }
+
+    pub fn add_handle(&self, pid: u64, target: u64, granted: u32, requested: u32) {
+        let log = Log::new();   
+
+        //
+        // Do some basic error checking before adding data
+        //
+        if !self.processes.contains_key(&pid) {
+            log.log(
+                crate::utils::log::LogLevel::Error, 
+                &format!("Source pid: {pid} not found when trying to process a handle request.")
+            );
+
+            return;
+        }
+
+        if !self.processes.contains_key(&target) {
+            log.log(
+                crate::utils::log::LogLevel::Error, 
+                &format!("Target pid: {pid} not found when trying to process a handle request.")
+            );
+
+            return;
+        }
+
+        //
+        // Determine the mask
+        //
+        if granted & PROCESS_ALL_ACCESS.0 != 0 {
+            println!("ALL ACCESS RIGHTS")
+        }
+        if granted & PROCESS_CREATE_PROCESS.0 != 0 {
+            println!("PROCESS_CREATE_PROCESS")
+        }
+        if granted & PROCESS_CREATE_THREAD.0 != 0 {
+            println!("PROCESS_CREATE_THREAD")
+        }
+        if granted & PROCESS_DUP_HANDLE.0 != 0 {
+            println!("PROCESS_DUP_HANDLE")
+        }
+        if granted & PROCESS_QUERY_INFORMATION.0 != 0 {
+            println!("PROCESS_QUERY_INFORMATION")
+        }
+        if granted & PROCESS_QUERY_LIMITED_INFORMATION.0 != 0 {
+            println!("PROCESS_QUERY_LIMITED_INFORMATION")
+        }
+        if granted & PROCESS_SET_INFORMATION.0 != 0 {
+            println!("PROCESS_SET_INFORMATION")
+        }
+        if granted & PROCESS_SET_QUOTA.0 != 0 {
+            println!("PROCESS_SET_QUOTA")
+        }
+        if granted & PROCESS_SUSPEND_RESUME.0 != 0 {
+            println!("PROCESS_SUSPEND_RESUME")
+        }
+        if granted & PROCESS_TERMINATE.0 != 0 {
+            println!("PROCESS_TERMINATE")
+        }
+        if granted & PROCESS_VM_READ.0 != 0 {
+            println!("PROCESS_VM_READ")
+        }
+        if granted & PROCESS_VM_OPERATION.0 != 0 {
+            println!("PROCESS_VM_OPERATION")
+        }
+        if granted & PROCESS_VM_WRITE.0 != 0 {
+            println!("PROCESS_VM_WRITE")
+        }
+        if granted & SYNCHRONIZE.0 != 0 {
+            println!("SYNCHRONIZE")
+        }
+        if granted & DELETE.0 != 0 {
+            println!("DELETE")
+        }
+        if granted & READ_CONTROL.0 != 0 {
+            println!("READ_CONTROL")
+        }
+        if granted & WRITE_DAC.0 != 0 {
+            println!("WRITE_DAC")
+        }
+        if granted & WRITE_OWNER.0 != 0 {
+            println!("WRITE_OWNER")
+        }
+        
+
+
+
     }
 }

@@ -5,7 +5,7 @@ pub fn get_logged_in_username() -> Result<String, String>{
     let mut buffer: [u16; 256] = [0; 256];
     let mut size = buffer.len() as u32;
 
-    let result = unsafe {GetUserNameW(PWSTR(buffer.as_mut_ptr()), &mut size) };
+    let result = unsafe {GetUserNameW(Some(PWSTR(buffer.as_mut_ptr())), &mut size) };
 
     if let Err(e) = result {
         return Err(format!("Error getting UserName: {e}"));

@@ -3,7 +3,8 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::driver_ipc::{ProcessStarted, ProcessTerminated};
+use crate::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
+use alloc::vec::Vec;
 
 extern crate alloc;
 
@@ -84,7 +85,8 @@ impl Default for SancIoctlPing<> {
 #[derive(Serialize, Deserialize, Default, Debug)]
 pub struct DriverMessages {
     pub is_empty: bool,
-    pub messages: alloc::vec::Vec<alloc::string::String>,
-    pub process_creations: alloc::vec::Vec<ProcessStarted>,
-    pub process_terminations: alloc::vec::Vec<ProcessTerminated>,
+    pub messages: Vec<alloc::string::String>,
+    pub process_creations: Vec<ProcessStarted>,
+    pub process_terminations: Vec<ProcessTerminated>,
+    pub handles: Vec<HandleObtained>,
 }

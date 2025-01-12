@@ -79,7 +79,7 @@ impl Core {
                 let process_terminations = driver_messages.process_terminations;
                 if !process_terminations.is_empty() {
                     for t in process_terminations {
-                        self.process_monitor.write().await.remove_process(t.pid);
+                        self.process_monitor.write().await.remove_process(t.pid).await;
                     }
                 }
 
@@ -90,6 +90,18 @@ impl Core {
                         if self.process_monitor.write().await.insert(&p).await.is_err() {
                             logger.log(LogLevel::Error, &format!("Failed to add new process to live processes. Process: {:?}", p));
                         }
+                    }
+                }
+
+                // process all handles
+                if !driver_messages.handles.is_empty() {
+                    for item in driver_messages.handles {
+                        self.process_monitor.read().await.add_handle(
+                            item.source_pid, 
+                            item.dest_pid, 
+                            item.rights_given, 
+                            item.rights_desired,
+                        );
                     }
                 }
 
