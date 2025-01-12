@@ -247,6 +247,8 @@ pub async fn handle_ipc(
             if let Some(args) = request.args {
                 let pid: String = serde_json::from_value(args).unwrap();
                 let pid = pid.parse::<u64>();
+
+                // if the pid is a valid u64 proceed to query the pid
                 if let Ok(pid) = pid {
                     let res = core.query_process_by_pid(pid).await;
                     if res.is_none() {
@@ -255,8 +257,14 @@ pub async fn handle_ipc(
                             message: format!("Could not find process from pid: {pid}."),
                         }).unwrap()
                     } else {
-                        to_value(res.unwrap()).unwrap()
+                        to_value(CommandResponse {
+                            status: "success".to_string(),
+                            message: format!("{:?}", res.unwrap()),
+                        }).unwrap()
                     }
+
+
+                // if pid was NaN
                 } else {
                     to_value(CommandResponse {
                         status: "error".to_string(),
