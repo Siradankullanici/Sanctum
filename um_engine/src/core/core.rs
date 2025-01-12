@@ -1,13 +1,11 @@
-use std::{ffi::CStr, sync::Arc, time::Duration};
+use std::{sync::Arc, time::Duration};
 
-use shared_no_std::driver_ipc::ProcessStarted;
 use shared_std::processes::Process;
 use tokio::{sync::{Mutex, RwLock}, time::sleep};
-use windows::Win32::{Foundation::{CloseHandle, GetLastError}, System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
-use super::process_monitor::ProcessMonitor;
+use super::process_monitor::{snapshot_all_processes, ProcessMonitor};
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates
 /// with the kernel.
@@ -96,7 +94,7 @@ impl Core {
                 // process all handles
                 if !driver_messages.handles.is_empty() {
                     for item in driver_messages.handles {
-                        self.process_monitor.read().await.add_handle(
+                        self.process_monitor.write().await.add_handle(
                             item.source_pid, 
                             item.dest_pid, 
                             item.rights_given, 
@@ -158,79 +156,4 @@ impl Core {
         self.process_monitor.read().await.query_process_by_pid(pid)
     }
 
-}
-
-/// Enumerate all processes and add them to the active process monitoring hashmap.
-async fn snapshot_all_processes() -> ProcessMonitor {
-
-    let logger = Log::new();
-    let mut all_processes = ProcessMonitor::new();
-    let mut processes_cache: Vec<ProcessStarted> = vec![];
-
-    let snapshot = match unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0)} {
-        Ok(s) => {
-            if s.is_invalid() {
-                logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
-            } else {
-                s
-            }
-        },
-        Err(_) => {
-            // not really bothered about the error at this stage
-            logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
-        },
-    };
-
-    let mut process_entry = PROCESSENTRY32::default();
-    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
-
-    if unsafe { Process32First(snapshot,&mut process_entry)}.is_ok() {
-        loop {
-            // 
-            // Get the process name
-            //
-            let current_process_name_ptr = process_entry.szExeFile.as_ptr() as *const _;
-            let current_process_name = match unsafe { CStr::from_ptr(current_process_name_ptr) }.to_str() {
-                Ok(process) => process.to_string(),
-                Err(e) => {
-                    logger.log(LogLevel::Error, &format!("Error converting process name. {e}"));
-                    continue;
-                }
-            };
-
-            logger.log(LogLevel::Success, &format!("Process name: {}, pid: {}, parent: {}", current_process_name, process_entry.th32ProcessID, process_entry.th32ParentProcessID));
-            let process = ProcessStarted {
-                image_name: current_process_name,
-                command_line: "".to_string(),
-                parent_pid: process_entry.th32ParentProcessID as u64,
-                pid: process_entry.th32ProcessID as u64,
-            };
-
-            processes_cache.push(process);
-
-            // continue enumerating
-            if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
-                break;
-            }
-        }
-    }
-
-    unsafe { let _ = CloseHandle(snapshot); };
-
-    // Now the HANDLE is closed we are able to call the async function insert on all_processes. 
-    // We could not do this before closing the handle as teh HANDLE (aka *mut c_void) is not Send
-    for process in processes_cache {
-        if let Err(e) = all_processes.insert(&process).await {
-            match e {
-                super::process_monitor::ProcessErrors::DuplicatePid => {
-                    logger.log(LogLevel::Error, &format!("Duplicate PID found in process hashmap, did not insert. Pid in question: {}", process_entry.th32ProcessID));
-                },
-                _ => {
-                    logger.log(LogLevel::Error, "An unknown error occurred whilst trying to insert into process hashmap.");
-                }
-            }
-        };
-    }
-
-    all_processes
 }

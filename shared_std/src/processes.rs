@@ -8,7 +8,7 @@ pub struct Process {
     pub pid: u64,
     pub process_image: String,
     pub commandline_args: String,
-    pub risk_score: u8,
+    pub risk_score: u16,
     pub allow_listed: bool, // whether the application is allowed to exist without monitoring
     pub sanctum_protected_process: bool, // scc (sanctum protected process) defines processes which require additional protections from access / abuse, such as lsass.exe.
 }

@@ -1,10 +1,17 @@
-use std::collections::HashMap;
+use std::{collections::HashMap, ffi::CStr};
 
 use shared_no_std::driver_ipc::ProcessStarted;
 use shared_std::processes::Process;
-use windows::Win32::{Storage::FileSystem::{DELETE, READ_CONTROL, SYNCHRONIZE, WRITE_DAC, WRITE_OWNER}, System::Threading::{PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SET_INFORMATION, PROCESS_SET_QUOTA, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}};
+use windows::{core::PSTR, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}, Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
-use crate::utils::log::Log;
+use crate::utils::log::{Log, LogLevel};
+
+static IGNORED_PROCESSES: [&str; 4] = [
+    r"C:\Windows\System32\svchost.exe",
+    r"C:\Windows\System32\Taskmgr.exe",
+    r"C:\Windows\System32\RuntimeBroker.exe",
+    r"C:\Windows\explorer.exe",
+];
 
 /// The ProcessMonitor is responsible for monitoring all processes running; this 
 /// structure holds a hashmap of all processes by the pid as an integer, and 
@@ -14,7 +21,8 @@ use crate::utils::log::Log;
 /// struct.
 #[derive(Debug, Default)]
 pub struct ProcessMonitor {
-    processes: HashMap<u64, Process>
+    processes: HashMap<u64, Process>,
+    max_risk_score: u16,
 }
 
 pub enum ProcessErrors {
@@ -22,11 +30,12 @@ pub enum ProcessErrors {
     DuplicatePid,
 }
 
-
 impl ProcessMonitor {
     pub fn new() -> Self {
         ProcessMonitor {
             processes: HashMap::new(),
+            // Define the max risk score a process is allowed to have before we start some interventions
+            max_risk_score: 100,
         }
     }
 
@@ -44,12 +53,22 @@ impl ProcessMonitor {
             return Err(ProcessErrors::DuplicatePid);
         }
 
+        println!("Image name: {}", proc.image_name);
+
+        let mut allow_listed = false;
+        for item in IGNORED_PROCESSES {
+            if proc.image_name.eq(item) {
+                allow_listed = true;
+                break;
+            }
+        }
+
         self.processes.insert(proc.pid, Process {
             pid: proc.pid,
             process_image: proc.image_name.clone(),
             commandline_args: proc.command_line.clone(),
             risk_score: 0,
-            allow_listed: false,
+            allow_listed,
             sanctum_protected_process: false,
         });
 
@@ -78,8 +97,20 @@ impl ProcessMonitor {
         }
     }
 
-    pub fn add_handle(&self, pid: u64, target: u64, granted: u32, requested: u32) {
-        let log = Log::new();   
+    pub fn add_handle(&mut self, pid: u64, target: u64, granted: u32, requested: u32) {
+        // If the process is allowed to do as it pleases, then discard early.
+        if let Some(process) = self.processes.get(&pid) {
+            if process.allow_listed == true {
+                return;
+            }
+        }
+
+        // If the source is our engine
+        if pid == unsafe {GetCurrentProcessId() as u64} {
+            return;
+        }
+
+        let log = Log::new();
 
         //
         // Do some basic error checking before adding data
@@ -102,66 +133,200 @@ impl ProcessMonitor {
             return;
         }
 
-        //
-        // Determine the mask
-        //
-        if granted & PROCESS_ALL_ACCESS.0 != 0 {
-            println!("ALL ACCESS RIGHTS")
-        }
-        if granted & PROCESS_CREATE_PROCESS.0 != 0 {
-            println!("PROCESS_CREATE_PROCESS")
-        }
-        if granted & PROCESS_CREATE_THREAD.0 != 0 {
-            println!("PROCESS_CREATE_THREAD")
-        }
-        if granted & PROCESS_DUP_HANDLE.0 != 0 {
-            println!("PROCESS_DUP_HANDLE")
-        }
-        if granted & PROCESS_QUERY_INFORMATION.0 != 0 {
-            println!("PROCESS_QUERY_INFORMATION")
-        }
-        if granted & PROCESS_QUERY_LIMITED_INFORMATION.0 != 0 {
-            println!("PROCESS_QUERY_LIMITED_INFORMATION")
-        }
-        if granted & PROCESS_SET_INFORMATION.0 != 0 {
-            println!("PROCESS_SET_INFORMATION")
-        }
-        if granted & PROCESS_SET_QUOTA.0 != 0 {
-            println!("PROCESS_SET_QUOTA")
-        }
-        if granted & PROCESS_SUSPEND_RESUME.0 != 0 {
-            println!("PROCESS_SUSPEND_RESUME")
-        }
-        if granted & PROCESS_TERMINATE.0 != 0 {
-            println!("PROCESS_TERMINATE")
-        }
-        if granted & PROCESS_VM_READ.0 != 0 {
-            println!("PROCESS_VM_READ")
-        }
-        if granted & PROCESS_VM_OPERATION.0 != 0 {
-            println!("PROCESS_VM_OPERATION")
-        }
-        if granted & PROCESS_VM_WRITE.0 != 0 {
-            println!("PROCESS_VM_WRITE")
-        }
-        if granted & SYNCHRONIZE.0 != 0 {
-            println!("SYNCHRONIZE")
-        }
-        if granted & DELETE.0 != 0 {
-            println!("DELETE")
-        }
-        if granted & READ_CONTROL.0 != 0 {
-            println!("READ_CONTROL")
-        }
-        if granted & WRITE_DAC.0 != 0 {
-            println!("WRITE_DAC")
-        }
-        if granted & WRITE_OWNER.0 != 0 {
-            println!("WRITE_OWNER")
-        }
-        
+        // TODO: the below logic isn't quite right - it turns out after some experimentation assigning risk scores to 
+        // handles is not a good measure of intent; tracking handles is still probably a good thing, however it begs the
+        // question just disallowing `CreateRemoteThread`, `VirtualAllocEx`, `WriteProcessMemory` etc is just better in 
+        // every way without having to track process handles?
+        return;
 
+        //
+        // Determine the mask.
+        // Match on the granted HANDLE access rights mask for the case where it == PROCESS_ALL_ACCESS; we can assign
+        // a hard fixed score. As the PROCESS_ALL_ACCESS will also be true for its sub matches, we need to distinguish
+        // a request for all access from the sub masks.
+        // For any other mask; we can then add cumulative risk scores per mask, which will still catch people trying to
+        // evade the EDR by changing the  access from READ, to WRITE, to OPERATION, etc.
+        //
+
+        let mut risk_score_for_handle: u16 = 0;
+
+        if granted & PROCESS_ALL_ACCESS.0 != 0 {
+            println!("ALL ACCESS RIGHTS");
+            risk_score_for_handle = 60;
+        } else {
+
+            //
+            // Process the sub masks where there != match for PROCESS_ALL_ACCESS
+            //
+            if granted & PROCESS_CREATE_PROCESS.0 != 0 {
+                println!("PROCESS_CREATE_PROCESS");
+                risk_score_for_handle = 20;
+            }
+            if granted & PROCESS_CREATE_THREAD.0 != 0 {
+                println!("PROCESS_CREATE_THREAD");
+                risk_score_for_handle = 30;
+            }
+            if granted & PROCESS_DUP_HANDLE.0 != 0 {
+                println!("PROCESS_DUP_HANDLE");
+                risk_score_for_handle = 20;
+            }
+            if granted & PROCESS_QUERY_INFORMATION.0 != 0 {
+                println!("PROCESS_QUERY_INFORMATION");
+                risk_score_for_handle = 5;
+            }
+            if granted & PROCESS_QUERY_LIMITED_INFORMATION.0 != 0 {
+                println!("PROCESS_QUERY_LIMITED_INFORMATION");
+                risk_score_for_handle = 5;
+            }
+            if granted & PROCESS_SUSPEND_RESUME.0 != 0 {
+                println!("PROCESS_SUSPEND_RESUME");
+                risk_score_for_handle = 30;
+            }
+            if granted & PROCESS_TERMINATE.0 != 0 {
+                println!("PROCESS_TERMINATE");
+                risk_score_for_handle = 5;
+            }
+            if granted & PROCESS_VM_READ.0 != 0 {
+                println!("PROCESS_VM_READ");
+                risk_score_for_handle = 30;
+            }
+            if granted & PROCESS_VM_OPERATION.0 != 0 {
+                println!("PROCESS_VM_OPERATION");
+                risk_score_for_handle = 30;
+            }
+            if granted & PROCESS_VM_WRITE.0 != 0 {
+                println!("PROCESS_VM_WRITE");
+                risk_score_for_handle = 30;
+            }
+
+        }
+
+        let p = self.processes.get_mut(&pid);
+        if p.is_some() {
+            p.unwrap().risk_score += risk_score_for_handle;
+            let p = self.processes.get(&pid).unwrap();
+            let t = self.processes.get(&target);
+            println!("[i] Risk score for the process {pid} {}: {}. Accessing: {} {:?}", p.process_image, p.risk_score, target, t);
+        }
 
 
     }
 }
+
+/// Enumerate all processes and add them to the active process monitoring hashmap.
+pub async fn snapshot_all_processes() -> ProcessMonitor {
+
+    let logger = Log::new();
+    let mut all_processes = ProcessMonitor::new();
+    let mut processes_cache: Vec<ProcessStarted> = vec![];
+
+    let snapshot = match unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0)} {
+        Ok(s) => {
+            if s.is_invalid() {
+                logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
+            } else {
+                s
+            }
+        },
+        Err(_) => {
+            // not really bothered about the error at this stage
+            logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
+        },
+    };
+
+    let mut process_entry = PROCESSENTRY32::default();
+    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+
+    if unsafe { Process32First(snapshot,&mut process_entry)}.is_ok() {
+        loop {
+            // 
+            // Get the process name; helpful mostly for debug messages
+            //
+            let current_process_name_ptr = process_entry.szExeFile.as_ptr() as *const _;
+            let current_process_name = match unsafe { CStr::from_ptr(current_process_name_ptr) }.to_str() {
+                Ok(process) => process.to_string(),
+                Err(e) => {
+                    logger.log(LogLevel::Error, &format!("Error converting process name. {e}"));
+                    if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            //
+            // Get the full image of the process
+            //
+            let res = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION, false, process_entry.th32ProcessID)};
+            let h_process = match res {
+                Ok(h) => h,
+                Err(e) => {
+                    logger.log(LogLevel::NearFatal, 
+                        &format!("Failed to get a handle to process: {}. Error: {e}", current_process_name)
+                    );
+                    if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                        break;
+                    }
+                    continue;
+                },
+            };
+
+            let mut out_str: Vec<u8> = vec![0; MAX_PATH as _];
+            let mut len = out_str.len() as u32;
+
+            let res = unsafe {
+                QueryFullProcessImageNameA(
+                    h_process, 
+                    PROCESS_NAME_FORMAT::default(), 
+                    PSTR::from_raw(out_str.as_mut_ptr()),
+                    &mut len,
+                )
+            };
+            if res.is_err() {
+                logger.log(LogLevel::NearFatal, 
+                    &format!("Failed to query full image name for process: {}. Error: {}", current_process_name, unsafe {GetLastError().0})
+                );
+                if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                    break;
+                }
+                continue;
+            }
+
+            let full_img_path = unsafe {CStr::from_ptr(out_str.as_ptr() as *const _)}.to_string_lossy().into_owned();
+
+            let process = ProcessStarted {
+                image_name: full_img_path.clone(),
+                command_line: "".to_string(),
+                parent_pid: process_entry.th32ParentProcessID as u64,
+                pid: process_entry.th32ProcessID as u64,
+            };
+
+            processes_cache.push(process);
+
+            // continue enumerating
+            if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                break;
+            }
+        }
+    }
+
+    unsafe { let _ = CloseHandle(snapshot); };
+
+    // Now the HANDLE is closed we are able to call the async function insert on all_processes. 
+    // We could not do this before closing the handle as teh HANDLE (aka *mut c_void) is not Send
+    for process in processes_cache {
+        if let Err(e) = all_processes.insert(&process).await {
+            match e {
+                super::process_monitor::ProcessErrors::DuplicatePid => {
+                    logger.log(LogLevel::Error, &format!("Duplicate PID found in process hashmap, did not insert. Pid in question: {}", process_entry.th32ProcessID));
+                },
+                _ => {
+                    logger.log(LogLevel::Error, "An unknown error occurred whilst trying to insert into process hashmap.");
+                }
+            }
+        };
+    }
+
+    all_processes
+}
+
