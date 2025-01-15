@@ -27,7 +27,7 @@ pub struct Core {
 
 impl Core {
 
-    /// Initialises a new Core instance from a poll rate in milliseconds.
+    /// Initialises a new Core instance from a poll rate in **milliseconds**.
     pub fn from(poll_rate: u64) -> Self {
         let mut core = Core::default();
         
@@ -85,7 +85,7 @@ impl Core {
                 let process_creations = driver_messages.process_creations;
                 if !process_creations.is_empty() {
                     for p in process_creations {
-                        if self.process_monitor.write().await.insert(&p).await.is_err() {
+                        if self.process_monitor.write().await.onboard_new_process(&p).await.is_err() {
                             logger.log(LogLevel::Error, &format!("Failed to add new process to live processes. Process: {:?}", p));
                         }
                     }

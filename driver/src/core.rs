@@ -116,6 +116,7 @@ impl ProcessHandleCallback {
 }
 
 /// Callback function to handle process handle request,s 
+/// TODO this needs updating to pause on handle, communicate with engine, and make a decision as per drawing
 pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut OB_PRE_OPERATION_INFORMATION) -> OB_PREOP_CALLBACK_STATUS {
     
     // todo pick up from here after thread testing

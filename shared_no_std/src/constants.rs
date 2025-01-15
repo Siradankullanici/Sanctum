@@ -39,3 +39,4 @@ pub static SANC_SYS_FILE_LOCATION: &str = "Sanctum\\sanctum.sys";
 pub static IOC_LIST_LOCATION: &str = "Sanctum\\ioc_list.txt";
 pub static IOC_URL: &str = "https://raw.githubusercontent.com/0xflux/Sanctum/refs/heads/main/ioc_list.txt";
 pub static LOG_PATH: &str = r"logs\sanctum.log";
+pub static SANCTUM_DLL_RELATIVE_PATH: &str = "Sanctum\\sanctum.dll";

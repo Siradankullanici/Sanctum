@@ -1,10 +1,10 @@
-use std::{collections::HashMap, ffi::CStr};
+use std::{collections::HashMap, ffi::CStr, path::PathBuf};
 
-use shared_no_std::driver_ipc::ProcessStarted;
+use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
 use shared_std::processes::Process;
-use windows::{core::PSTR, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}, Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
+use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
-use crate::utils::log::{Log, LogLevel};
+use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 
 static IGNORED_PROCESSES: [&str; 4] = [
     r"C:\Windows\System32\svchost.exe",
@@ -28,6 +28,8 @@ pub struct ProcessMonitor {
 pub enum ProcessErrors {
     PidNotFound,
     DuplicatePid,
+    BadHandle,
+    BadFnAddress,
 }
 
 impl ProcessMonitor {
@@ -39,8 +41,39 @@ impl ProcessMonitor {
         }
     }
 
-    /// todo more fn comments
-    pub async fn insert(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
+    /// This function will complete the onboarding of a newly created process including:
+    /// 
+    /// todo 1) Process kernel information about the process (such as with the syscall detection logic)
+    /// 
+    /// todo 2) Grant permission for the process to be created / instruct the kernel to kill the process
+    /// 
+    /// 3) Inject the EDR DLL into the newly created process
+    /// 4) Register the process with [`ProcessMonitor`]
+    pub async fn onboard_new_process(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
+
+        // todo kernel stuff here for points 1 and 2
+        /*
+         */
+
+        // Inject the EDR's DLL. 
+        // TODO for now to prevent system instability this will only be done for Notepad. This will need to be 
+        // reflected at some point for all processes.
+        if proc.image_name.contains("Notepad") {
+            println!("[i] Notepad detected, injecting EDR DLL...");
+            let _ = inject_edr_dll(proc.pid);
+        }
+
+        // The process can now be tracked, so register it with the ProcessMonitor
+        self.register_process(proc).await?;
+
+        Ok(())
+
+    }
+
+    /// Registers a process with the [`ProcessMonitor`] which will track the process. This should be used to add
+    /// the process to the [`ProcessMonitor`] and shall not deal with any additional tasks, such as injection, or 
+    /// other 'middleware' actions.
+    pub async fn register_process(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
         //
         // First check we aren't inserting a duplicate PID, this may happen if we haven't received
         // a notification that a process has been terminated; or that we have a new process queued to
@@ -116,19 +149,21 @@ impl ProcessMonitor {
         // Do some basic error checking before adding data
         //
         if !self.processes.contains_key(&pid) {
-            log.log(
-                crate::utils::log::LogLevel::Error, 
-                &format!("Source pid: {pid} not found when trying to process a handle request.")
-            );
+            // todo this happens a lot - why?
+            // log.log(
+            //     crate::utils::log::LogLevel::Error, 
+            //     &format!("Source pid: {pid} not found when trying to process a handle request.")
+            // );
 
             return;
         }
 
         if !self.processes.contains_key(&target) {
-            log.log(
-                crate::utils::log::LogLevel::Error, 
-                &format!("Target pid: {pid} not found when trying to process a handle request.")
-            );
+            // todo this happens a lot - why?
+            // log.log(
+            //     crate::utils::log::LogLevel::Error, 
+            //     &format!("Target pid: {pid} not found when trying to process a handle request.")
+            // );
 
             return;
         }
@@ -315,7 +350,7 @@ pub async fn snapshot_all_processes() -> ProcessMonitor {
     // Now the HANDLE is closed we are able to call the async function insert on all_processes. 
     // We could not do this before closing the handle as teh HANDLE (aka *mut c_void) is not Send
     for process in processes_cache {
-        if let Err(e) = all_processes.insert(&process).await {
+        if let Err(e) = all_processes.onboard_new_process(&process).await {
             match e {
                 super::process_monitor::ProcessErrors::DuplicatePid => {
                     logger.log(LogLevel::Error, &format!("Duplicate PID found in process hashmap, did not insert. Pid in question: {}", process_entry.th32ProcessID));
@@ -330,3 +365,36 @@ pub async fn snapshot_all_processes() -> ProcessMonitor {
     all_processes
 }
 
+
+/// Inject the EDR's DLL into a given process by PID. This should be done for processes running on start, and for 
+/// processes which are newly created.
+fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
+    // Open the process
+    let h_process = unsafe { OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, false, pid as u32) };
+    let h_process = match h_process {
+        Ok(h) => h,
+        Err(_) => return Err(ProcessErrors::BadHandle),
+    };
+
+    // Get a handle to Kernel32.dll
+    let h_kernel32 = unsafe { GetModuleHandleA(s!("Kernel32.dll")) };
+    let h_kernel32 = match h_kernel32 {
+        Ok(h) => h,
+        Err(e) => return Err(ProcessErrors::BadHandle),
+    };
+
+    // Get a function pointer to LoadLibraryA from Kernel32.dll
+    let load_library_fn_address = unsafe { GetProcAddress(h_kernel32, s!("LoadLibraryA")) };
+    let load_library_fn_address = match load_library_fn_address {
+        None => return Err(ProcessErrors::BadFnAddress),
+        Some(address) => address as *const (),
+    };
+
+    // Allocate memory for the path to the DLL
+    let username = get_logged_in_username().unwrap();
+    let base_path = format!("C:\\Users\\{username}\\AppData\\Roaming\\");
+    let path = PathBuf::from(format!("{}{}", base_path, SANCTUM_DLL_RELATIVE_PATH));
+    
+
+    Ok(())
+}
