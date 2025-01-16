@@ -46,6 +46,7 @@
         "PUNICODE",
         "PWSTR",
         "Raii",
+        "READWRITE",
         "regedit",
         "repr",
         "reqwest",

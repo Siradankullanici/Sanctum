@@ -1,8 +1,8 @@
-use std::{collections::HashMap, ffi::CStr, path::PathBuf};
+use std::{collections::HashMap, ffi::{c_void, CStr}, path::PathBuf};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
 use shared_std::processes::Process;
-use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Threading::{GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
+use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 
@@ -25,11 +25,15 @@ pub struct ProcessMonitor {
     max_risk_score: u16,
 }
 
+#[derive(Debug)]
 pub enum ProcessErrors {
     PidNotFound,
     DuplicatePid,
     BadHandle,
     BadFnAddress,
+    BaseAddressNull,
+    FailedToWriteMemory,
+    FailedToCreateRemoteThread,
 }
 
 impl ProcessMonitor {
@@ -60,7 +64,9 @@ impl ProcessMonitor {
         // reflected at some point for all processes.
         if proc.image_name.contains("Notepad") {
             println!("[i] Notepad detected, injecting EDR DLL...");
-            let _ = inject_edr_dll(proc.pid);
+            if let Err(e) = inject_edr_dll(proc.pid) {
+                println!("[-] Error injecting DLL: {:?}", e);
+            };
         }
 
         // The process can now be tracked, so register it with the ProcessMonitor
@@ -380,7 +386,7 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     let h_kernel32 = unsafe { GetModuleHandleA(s!("Kernel32.dll")) };
     let h_kernel32 = match h_kernel32 {
         Ok(h) => h,
-        Err(e) => return Err(ProcessErrors::BadHandle),
+        Err(_) => return Err(ProcessErrors::BadHandle),
     };
 
     // Get a function pointer to LoadLibraryA from Kernel32.dll
@@ -393,8 +399,59 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     // Allocate memory for the path to the DLL
     let username = get_logged_in_username().unwrap();
     let base_path = format!("C:\\Users\\{username}\\AppData\\Roaming\\");
-    let path = PathBuf::from(format!("{}{}", base_path, SANCTUM_DLL_RELATIVE_PATH));
-    
+    let dll_path = format!("{}{}\0", base_path, SANCTUM_DLL_RELATIVE_PATH);
+    let path_len = dll_path.len();
+
+    let remote_buffer_base_address = unsafe {
+        VirtualAllocEx(h_process,
+                        None,
+                        path_len,
+                        MEM_COMMIT | MEM_RESERVE,
+                       PAGE_EXECUTE_READWRITE,
+    ) };
+
+    if remote_buffer_base_address.is_null() {
+        return Err(ProcessErrors::BaseAddressNull);
+    }
+
+    // Write to the buffer
+    let mut bytes_written: usize = 0;
+    let buff_result = unsafe {
+        WriteProcessMemory(
+            h_process, 
+            remote_buffer_base_address, 
+            dll_path.as_ptr() as *const  _,
+            path_len, 
+            Some(&mut bytes_written as *mut usize
+        ))
+    };
+
+    if buff_result.is_err() {
+        return Err(ProcessErrors::FailedToWriteMemory);
+    }
+
+    // correctly cast the address of LoadLibraryA
+    let load_library_fn_address: Option<unsafe extern "system" fn(*mut c_void) -> u32> = Some(
+        unsafe { std::mem::transmute(load_library_fn_address) }
+    );
+
+    // Create thread in process
+    let mut thread: u32 = 0;
+    let h_thread = unsafe { CreateRemoteThread(
+        h_process,
+        None, // default security descriptor
+        0, // default stack size
+        load_library_fn_address,
+        Some(remote_buffer_base_address),
+        0,
+        Some(&mut thread as *mut u32),
+    )};
+
+    if h_thread.is_err() {
+        return Err(ProcessErrors::FailedToCreateRemoteThread);
+    }
+
+    println!("DLL injected! h_thread: {:?}, buff mem addr: {:?}", h_thread, remote_buffer_base_address);
 
     Ok(())
 }

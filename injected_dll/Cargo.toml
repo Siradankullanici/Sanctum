@@ -2,10 +2,15 @@
 name = "injected_dll"
 version = "0.1.0"
 edition = "2024"
+
+[lib]
 crate-type = ["cdylib"]
 
 [dependencies]
 windows = { version = "0.59.0", features = [
+   "Win32_System_LibraryLoader",
     "Win32_UI_WindowsAndMessaging",
     "Win32_System_SystemServices",
+    "Win32_System_Threading", 
+    "Win32_Security",
 ] }
