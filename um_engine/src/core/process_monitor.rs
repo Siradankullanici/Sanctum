@@ -4,7 +4,7 @@ use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessSta
 use shared_std::processes::Process;
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
-use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
+use crate::utils::{env::get_logged_in_username, log::{self, Log, LogLevel}};
 
 static IGNORED_PROCESSES: [&str; 4] = [
     r"C:\Windows\System32\svchost.exe",
@@ -55,6 +55,8 @@ impl ProcessMonitor {
     /// 4) Register the process with [`ProcessMonitor`]
     pub async fn onboard_new_process(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
 
+        let logger = Log::new();
+
         // todo kernel stuff here for points 1 and 2
         /*
          */
@@ -65,7 +67,7 @@ impl ProcessMonitor {
         if proc.image_name.contains("Notepad") {
             println!("[i] Notepad detected, injecting EDR DLL...");
             if let Err(e) = inject_edr_dll(proc.pid) {
-                println!("[-] Error injecting DLL: {:?}", e);
+                logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
             };
         }
 
