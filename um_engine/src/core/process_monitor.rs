@@ -397,6 +397,7 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     };
 
     // Allocate memory for the path to the DLL
+    // todo needs moving to an admin location
     let username = get_logged_in_username().unwrap();
     let base_path = format!("C:\\Users\\{username}\\AppData\\Roaming\\");
     let dll_path = format!("{}{}\0", base_path, SANCTUM_DLL_RELATIVE_PATH);
@@ -450,8 +451,6 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     if h_thread.is_err() {
         return Err(ProcessErrors::FailedToCreateRemoteThread);
     }
-
-    println!("DLL injected! h_thread: {:?}, buff mem addr: {:?}", h_thread, remote_buffer_base_address);
 
     Ok(())
 }
