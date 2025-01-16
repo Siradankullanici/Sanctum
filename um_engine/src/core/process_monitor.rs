@@ -81,7 +81,7 @@ impl ProcessMonitor {
     /// Registers a process with the [`ProcessMonitor`] which will track the process. This should be used to add
     /// the process to the [`ProcessMonitor`] and shall not deal with any additional tasks, such as injection, or 
     /// other 'middleware' actions.
-    pub async fn register_process(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
+    async fn register_process(&mut self, proc: &ProcessStarted) -> Result<(), ProcessErrors> {
         //
         // First check we aren't inserting a duplicate PID, this may happen if we haven't received
         // a notification that a process has been terminated; or that we have a new process queued to
