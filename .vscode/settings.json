@@ -29,6 +29,7 @@
         "NTSTATUS",
         "pathbuf",
         "PCHAR",
+        "PCSTR",
         "PCUNICODE",
         "PCWSTR",
         "PDEVICE",
