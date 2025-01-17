@@ -34,6 +34,7 @@ pub enum ProcessErrors {
     BaseAddressNull,
     FailedToWriteMemory,
     FailedToCreateRemoteThread,
+    FailedToOpenProcess,
 }
 
 impl ProcessMonitor {
@@ -64,8 +65,8 @@ impl ProcessMonitor {
         // Inject the EDR's DLL. 
         // TODO for now to prevent system instability this will only be done for Notepad. This will need to be 
         // reflected at some point for all processes.
-        if proc.image_name.contains("Notepad") {
-            println!("[i] Notepad detected, injecting EDR DLL...");
+        if proc.image_name.contains("malware") {
+            println!("[i] Target process detected, injecting EDR DLL...");
             if let Err(e) = inject_edr_dll(proc.pid) {
                 logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
             };
@@ -381,7 +382,7 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     let h_process = unsafe { OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, false, pid as u32) };
     let h_process = match h_process {
         Ok(h) => h,
-        Err(_) => return Err(ProcessErrors::BadHandle),
+        Err(_) => return Err(ProcessErrors::FailedToOpenProcess),
     };
 
     // Get a handle to Kernel32.dll

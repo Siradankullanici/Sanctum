@@ -16,6 +16,10 @@ unsafe extern "system" fn open_process(
     _: *mut c_void,
 ) {
     unsafe {
-        MessageBoxA(None, s!("Inside the callback!"), s!("Inside the callback!"), MB_OK);
+        asm!(
+            "mov r10, rcx",
+            "mov eax, 0x26", // move the syscall number into EAX
+            "syscall",
+        );
     }
 }
