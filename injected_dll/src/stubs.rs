@@ -2,7 +2,7 @@
 
 use std::{arch::asm, ffi::c_void};
 
-use windows::{core::{s, PCSTR}, Win32::{Foundation::HANDLE, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use windows::Win32::Foundation::HANDLE;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
 /// any process this DLL is injected into.
