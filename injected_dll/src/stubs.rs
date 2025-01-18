@@ -13,13 +13,13 @@ unsafe extern "system" fn open_process(
     object_attrs: *mut c_void,
     client_id: *mut CLIENT_ID,
 ) {
-    // todo automate the syscall number so not hardcoded
     if !client_id.is_null() {
-        let pid = unsafe {(*client_id).UniqueProcess};
-        let x = format!("UniqueProcess: {:?}, proc hand: {:?}\0", pid, process_handle);
+        let unique_proc = unsafe {(*client_id).UniqueProcess};
+        let x = format!("UniqueProcess: {:?}, proc hand: {:?}\0", unique_proc, process_handle);
         unsafe { MessageBoxA(None, PCSTR::from_raw(x.as_ptr()), PCSTR::from_raw(x.as_ptr()), MB_OK) };
     }
     
+    // todo automate the syscall number so not hardcoded
     let ssn = 0x26; // give the compiler awareness of rax
 
     unsafe {
