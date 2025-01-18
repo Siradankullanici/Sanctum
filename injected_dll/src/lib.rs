@@ -51,7 +51,7 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
     unsafe {
         MessageBoxA(None, s!("b4!"), s!("b4!"), MB_OK);
     }
-    
+
     patch_ntdll(&stub_addresses);
 
     resume_all_threads(suspended_handles);
@@ -196,18 +196,18 @@ fn patch_ntdll(addresses: &StubAddresses) {
         )
     };
 
-    let call_bytes: &[u8] = &[0xFF, 0xE0];
+    let jmp_bytes: &[u8] = &[0xFF, 0xE0];
     let _ = unsafe {
         WriteProcessMemory(
             proc_hand,
             (addresses.ntdll.zw_open_process + 10) as *const _,
-            call_bytes.as_ptr() as *const _, 
-            call_bytes.len(), 
+            jmp_bytes.as_ptr() as *const _, 
+            jmp_bytes.len(), 
             None,
         )
     };
 
-    unsafe { MessageBoxA(None, s!("Done writes"), s!("Done writes"), MB_OK) };
+    // unsafe { MessageBoxA(None, s!("Done writes"), s!("Done writes"), MB_OK) };
 
 
     // unsafe {
