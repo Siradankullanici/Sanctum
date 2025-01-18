@@ -29,10 +29,10 @@ unsafe extern "system" fn open_process(
             in("rax") ssn,
             // Use the asm macro to load our registers so that the Rust compiler has awareness of the
             // use of the registers. Loading these by hands caused some instability
-            inout("rcx") process_handle.0 => _,
-            inout("rdx") desired_access => _,
-            inout("r8") object_attrs => _,
-            inout("r9") client_id => _,
+            in("rcx") process_handle.0,
+            in("rdx") desired_access,
+            in("r8") object_attrs,
+            in("r9") client_id,
 
             options(nostack, preserves_flags)
         );
