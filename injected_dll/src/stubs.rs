@@ -14,8 +14,8 @@ unsafe extern "system" fn open_process(
     client_id: *mut CLIENT_ID,
 ) {
     if !client_id.is_null() {
-        let unique_proc = unsafe {(*client_id).UniqueProcess};
-        let x = format!("UniqueProcess: {:?}, proc hand: {:?}\0", unique_proc, process_handle);
+        let pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
+        let x = format!("pid: {}, proc hand: {:?}\0", pid, process_handle);
         unsafe { MessageBoxA(None, PCSTR::from_raw(x.as_ptr()), PCSTR::from_raw(x.as_ptr()), MB_OK) };
     }
     
