@@ -5,7 +5,7 @@ use tokio::{sync::{Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
-use super::process_monitor::{snapshot_all_processes, ProcessMonitor};
+use super::{injected_dll_ipc::run_ipc_for_injected_dll, process_monitor::{snapshot_all_processes, ProcessMonitor}};
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates
 /// with the kernel.
@@ -23,7 +23,6 @@ pub struct Core {
     driver_dbg_message_cache: Mutex<Vec<String>>,
     process_monitor: RwLock<ProcessMonitor>,
 }
-
 
 impl Core {
 
@@ -56,6 +55,10 @@ impl Core {
         // extend the newly created local processes type from the results of the snapshot
         self.process_monitor.write().await.extend_processes(snapshot_processes);
         
+        // Start the IPC server for the injected DLL to communicate with the core
+        tokio::spawn(async {
+            run_ipc_for_injected_dll().await;
+        });
 
         //
         // Enter the polling & decision making loop, this here is the core / engine of the usermode engine.
@@ -106,7 +109,6 @@ impl Core {
                 // cache messages
                 {
                     let mut message_cache = self.driver_dbg_message_cache.lock().await;
-                    println!("Driver messages: {:?}", message_cache);
                     if !driver_messages.messages.is_empty() {
                         message_cache.append(&mut driver_messages.messages);
                     }

@@ -12,8 +12,8 @@ use std::{path::PathBuf, sync::Arc};
 use serde_json::{from_slice, to_value, to_vec, Value};
 use shared_no_std::{constants::PIPE_NAME, ipc::{CommandRequest, CommandResponse}};
 use shared_std::settings::SanctumSettings;
-use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{PipeMode, ServerOptions}, sync::Mutex};
-use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, settings::{get_setting_paths, SanctumSettingsImpl}, utils::{env::get_logged_in_username, log::{Log, LogLevel}}}; 
+use tokio::{fs, io::{AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::ServerOptions, sync::Mutex};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, settings::get_setting_paths, utils::{env::get_logged_in_username, log::{Log, LogLevel}}}; 
 
 /// An interface for the usermode IPC server
 pub struct UmIpc{}

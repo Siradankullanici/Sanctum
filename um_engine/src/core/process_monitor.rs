@@ -95,7 +95,7 @@ impl ProcessMonitor {
             return Err(ProcessErrors::DuplicatePid);
         }
 
-        println!("Image name: {}", proc.image_name);
+        // println!("Image name: {}", proc.image_name);
 
         let mut allow_listed = false;
         for item in IGNORED_PROCESSES {

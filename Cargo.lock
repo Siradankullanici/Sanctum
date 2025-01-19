@@ -1711,6 +1711,7 @@ dependencies = [
 name = "injected_dll"
 version = "0.1.0"
 dependencies = [
+ "shared_std",
  "windows 0.59.0",
 ]
 
