@@ -30,9 +30,10 @@ impl UmIpc {
         logger.log(LogLevel::Info, &format!("Trying to start IPC server at {}...", PIPE_NAME));
 
         // set up IPC
+        // todo default server type to Bytes and see if it causes an issue, if not - delete the commented out pipe_mode.
         let mut server = ServerOptions::new()
             .first_pipe_instance(true)
-            .pipe_mode(PipeMode::Message)
+            // .pipe_mode(PipeMode::Message)
             .create(PIPE_NAME)?;
 
         logger.log(LogLevel::Success, &format!("Named pipe listening on {}", PIPE_NAME));
