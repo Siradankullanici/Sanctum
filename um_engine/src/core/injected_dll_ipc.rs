@@ -14,7 +14,7 @@ static SECURITY_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 /// Starts the IPC server for the DLL injected into processes to communicate with
 pub async fn run_ipc_for_injected_dll() {
     // Store the pointer in the atomic so we can safely access it across 
-    let sa_ptr = create_security_descriptor() as *mut c_void;
+    let sa_ptr = create_security_attributes() as *mut c_void;
     SECURITY_PTR.store(sa_ptr, std::sync::atomic::Ordering::SeqCst);
 
     // SAFETY: Null pointer checked at start of function
@@ -55,7 +55,7 @@ pub async fn run_ipc_for_injected_dll() {
 /// # Note
 /// A number of heap allocated structures will be leaked via `Box::leak()` - this is okay and not considered a memory leak as
 /// this will be called once during the creation of the named pipe and then are required for the duration of the process.
-fn create_security_descriptor() -> *mut SECURITY_ATTRIBUTES {
+fn create_security_attributes() -> *mut SECURITY_ATTRIBUTES {
     unsafe {
         //
         // Allocate the SECURITY_DESCRIPTOR on the heap and initialise
