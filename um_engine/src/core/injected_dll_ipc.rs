@@ -3,8 +3,9 @@
 
 use std::{ffi::c_void, mem, ptr::null_mut, sync::atomic::AtomicPtr};
 
-use shared_std::constants::PIPE_FOR_INJECTED_DLL;
-use tokio::net::windows::named_pipe::ServerOptions;
+use serde_json::from_slice;
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
+use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions};
 use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}};
 
 use crate::utils::log::{Log, LogLevel};
@@ -24,13 +25,13 @@ pub async fn run_ipc_for_injected_dll() {
         .expect("[-] Unable to create named pipe server for injected DLL")};
 
     let server = tokio::spawn(async move {
-        let logger = Log::new();
-
+        
         loop {
+            let logger = Log::new();
             // wait for a connection 
             logger.log(LogLevel::Info, "Waiting for IPC message from DLL");
             server.connect().await.expect("Could not get a client connection for injected DLL ipc");
-            let connected_client = server;
+            let mut connected_client = server;
 
             // Construct the next server before sending the one we have onto a task, which ensures
             // the server isn't closed
@@ -43,6 +44,22 @@ pub async fn run_ipc_for_injected_dll() {
             
             let client = tokio::spawn(async move {
                 println!("Hello from the client! {:?}", connected_client);
+                let mut buffer = vec![0; 1024];
+                match connected_client.read(&mut buffer).await {
+                    Ok(bytes_read) => {
+                        if bytes_read == 0 {
+                            logger.log(LogLevel::Info, "IPC client disconnected");
+                            return;
+                        }
+
+                        // deserialise the request
+                        match from_slice::<Syscall>(&buffer[..bytes_read]) {
+                            Ok(v) => logger.log(LogLevel::Success, &format!("Data from pipe: {:?}", v)),
+                            Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}")),
+                        }
+                    },
+                    Err(_) => todo!(),
+                }
                 // todo use the client 
             });
         }

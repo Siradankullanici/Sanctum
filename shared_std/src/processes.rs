@@ -12,3 +12,14 @@ pub struct Process {
     pub allow_listed: bool, // whether the application is allowed to exist without monitoring
     pub sanctum_protected_process: bool, // scc (sanctum protected process) defines processes which require additional protections from access / abuse, such as lsass.exe.
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum Syscall {
+    OpenProcess(OpenProcessData),
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OpenProcessData {
+    pub pid: u32,
+}
+

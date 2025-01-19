@@ -2,7 +2,8 @@
 
 use std::{arch::asm, ffi::c_void, fs::OpenOptions, io::Write, thread::sleep, time::Duration};
 
-use shared_std::constants::PIPE_FOR_INJECTED_DLL;
+use serde_json::to_vec;
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
 use windows::{core::PCSTR, Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::WindowsProgramming::CLIENT_ID, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
@@ -19,6 +20,10 @@ unsafe extern "system" fn open_process(
         let x = format!("pid: {}, proc hand: {:?}\0", pid, process_handle);
         unsafe { MessageBoxA(None, PCSTR::from_raw(x.as_ptr()), PCSTR::from_raw(x.as_ptr()), MB_OK) };
 
+        let data = Syscall::OpenProcess(OpenProcessData{
+            pid,
+        });
+
         // send information to the engine via IPC; do not use Tokio as we don't want the async runtime in our processes..
         // and it would not be FFI safe, so we will use the standard library to achieve this
         let mut client = loop {
@@ -32,8 +37,8 @@ unsafe extern "system" fn open_process(
             sleep(Duration::from_millis(50));
         };
 
-        let data= format!("PID that the process is trying to open a handle to is: {}", pid);
-        if let Err(e) = client.write_all(data.as_bytes()) {
+        let message_data = to_vec(&data).unwrap();
+        if let Err(e) = client.write_all(&message_data) {
             panic!("Error writing to named pipe to UM Engine. {e}");
         };
     }
