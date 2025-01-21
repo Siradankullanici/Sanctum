@@ -34,6 +34,29 @@ The EDR code is logically separated in one solution into the kernel mode driver 
 
 The usermode aspect of this application includes a GUI for you to use as a native windows program. 
 
+## Process monitoring 
+
+The EDR can monitor processes, tracking for signs of malicious activity in live time - currently the only supported tracking feature is 
+opening remote processes,
+
+## EDR DLL injection
+
+The EDR `um_engine` will inject a DLL into processes for internal  monitoring of the process.
+
+## EDR DLL syscall hooking
+
+The EDR injected DLL hooks syscalls; currently only `ZwOpenProcess` and redirects control to a function contained within the DLL for inspection.
+Via IPC, the DLL sends a message to the engine notifying it of the event, which then leads to my [Ghost Hunting](https://fluxsec.red/edr-syscall-hooking) 
+technique. 
+
+Example of hooked syscall:
+
+![ZwOpenProcess](imgs/evidence/zwopenproc.png)
+
+And the function to which execution jumps in the DLL:
+
+![Syscall callback](imgs/evidence/hooked.png)
+
 ## Antivirus scanning for malware detection (IOC hash):
 
 Scanning a file:
@@ -45,6 +68,11 @@ Scanning a folder:
 ![File scanning](imgs/evidence/scan_folder.gif)
 
 # Driver features
+
+## Callback monitoring
+
+The driver monitors the creation of new processes, termination of processes, and process handles requested by applications. The driver will then
+send this data back up to the usermode application (`um_engine`) via IOCTL.
 
 ## Basic IOCTL
 
