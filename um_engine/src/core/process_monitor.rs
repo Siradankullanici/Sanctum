@@ -194,6 +194,9 @@ impl ProcessMonitor {
             // if its empty, then that is bad!
             if process.ghost_hunting_timers.is_empty() {
                 process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
+                // todo this is going to be a pain to debug? revisit next session - seeing as we only inject in malware.exe this is triggering for
+                // everything right now!
+                println!("******* RISK SCORE RAISED AS LIST WAS EMPTY");
             } else {
                 // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
                 let mut index = 0;
@@ -202,6 +205,7 @@ impl ProcessMonitor {
                     if item.risk_multiplier == GhostHuntRiskScores::OpenProcess {
                         process.ghost_hunting_timers.remove(index);
                         matched = true;
+                        println!("+++++++++++++++++++++++++++++++++++++++++++++++ matched on open process! <3");
                         break;
                     }
 
@@ -210,6 +214,7 @@ impl ProcessMonitor {
 
                 if matched == false {
                     process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
+                    println!("******* RISK SCORE RAISED COULD NOT MATCH OPEN PROCESS CALL");
                 }
             }
         }
@@ -319,6 +324,7 @@ impl ProcessMonitor {
                         if t > MAX_WAIT {
                             process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
                             process.ghost_hunting_timers.remove(index);
+                            println!("******* RISK SCORE RAISED AS TIMER EXCEEDED");
                             break;
                         }
                     }
@@ -334,6 +340,7 @@ impl ProcessImpl for Process {
     /// Updates the risk score for a given process. The input score argument may be positive or negative
     /// within the bounds of the type; this will alter the score accordingly
     fn update_process_risk_score(&mut self, score: i16) {
+
         if self.risk_score.checked_add_signed(score).is_none() {
             // If we overflowed the unsigned int / went below zero, just assign a score of 0
             // todo this could possibly be abused by an adversary brute forcing a 0 score?
