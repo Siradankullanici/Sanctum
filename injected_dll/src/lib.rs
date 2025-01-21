@@ -104,7 +104,7 @@ impl StubAddresses {
         let open_process_fn_addr = match open_process_fn_addr {
             None => {
                 unsafe { MessageBoxA(None, s!("Could not get fn addr"), s!("Could not get fn addr"), MB_OK) };
-                todo!();
+                panic!("Oh no :("); // todo dont panic a process?
             },
             Some(address) => address as *const (),
         } as usize;
@@ -119,7 +119,7 @@ impl StubAddresses {
         let zwop = match zwop {
             None => {
                 unsafe { MessageBoxA(None, s!("Could not get fn addr"), s!("Could not get fn addr"), MB_OK) };
-                todo!();
+                panic!("Oh no :("); // todo dont panic a process?
             },
             Some(address) => address as *const (),
         } as usize;
