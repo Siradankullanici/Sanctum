@@ -72,7 +72,7 @@ impl Core {
             };
             
             //
-            // If we have new message(s) / emissions from the driver, process them in userland as appropriate 
+            // If we have new message(s) / emissions from the driver or injected DLL, process them as appropriate 
             //
             if driver_response.is_some() {
                 // first deal with process terminations to prevent trying to add to an old process id if there is a duplicate
@@ -97,7 +97,7 @@ impl Core {
                 // process all handles
                 if !driver_messages.handles.is_empty() {
                     for item in driver_messages.handles {
-                        self.process_monitor.write().await.add_handle(
+                        self.process_monitor.write().await.add_handle_driver_notified(
                             item.source_pid, 
                             item.dest_pid, 
                             item.rights_given, 
@@ -114,7 +114,11 @@ impl Core {
                     }
                 }
 
-                // add process creations to a hashmap (ProcessMonitor struct)
+                //
+                // Perform checks of process timers for Ghost Hunting
+                // What is Ghost Hunting? https://fluxsec.red/edr-syscall-hooking
+                //
+                
 
                 /*
                     todo long term: 

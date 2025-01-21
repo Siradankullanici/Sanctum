@@ -1,10 +1,10 @@
-use std::{collections::HashMap, ffi::{c_void, CStr}, path::PathBuf};
+use std::{collections::HashMap, ffi::{c_void, CStr}, time::Duration};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::Process;
+use shared_std::processes::{GhostHuntRiskMultiplier, Process};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
-use crate::utils::{env::get_logged_in_username, log::{self, Log, LogLevel}};
+use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 
 static IGNORED_PROCESSES: [&str; 4] = [
     r"C:\Windows\System32\svchost.exe",
@@ -112,6 +112,7 @@ impl ProcessMonitor {
             risk_score: 0,
             allow_listed,
             sanctum_protected_process: false,
+            ghost_hunting_timers: Vec::new(),
         });
 
         Ok(())
@@ -139,7 +140,9 @@ impl ProcessMonitor {
         }
     }
 
-    pub fn add_handle(&mut self, pid: u64, target: u64, granted: u32, requested: u32) {
+
+    /// Process a new process handle being obtained from a callback in the driver.
+    pub fn add_handle_driver_notified(&mut self, pid: u64, target: u64, granted: u32, requested: u32) {
         // If the process is allowed to do as it pleases, then discard early.
         if let Some(process) = self.processes.get(&pid) {
             if process.allow_listed == true {
@@ -154,11 +157,17 @@ impl ProcessMonitor {
 
         let log = Log::new();
 
+
         //
         // Do some basic error checking before adding data
         //
+
+        // if the list of processes doesn't contain the PID
         if !self.processes.contains_key(&pid) {
-            // todo this happens a lot - why?
+            // todo this happens a lot - why? Could this be because the source terminates before
+            // this runs? 
+            // todo look at a timing issue with the driver - do we still want to create the process here?
+            // 
             // log.log(
             //     crate::utils::log::LogLevel::Error, 
             //     &format!("Source pid: {pid} not found when trying to process a handle request.")
@@ -167,15 +176,38 @@ impl ProcessMonitor {
             return;
         }
 
-        if !self.processes.contains_key(&target) {
-            // todo this happens a lot - why?
-            // log.log(
-            //     crate::utils::log::LogLevel::Error, 
-            //     &format!("Target pid: {pid} not found when trying to process a handle request.")
-            // );
+        //
+        // Check whether the handle that was issued by the kernel matches a handle made via a valid syscall in ZwOpenProcess.
+        // There should not be a race condition here as the syscall stub occurs after the IPC is sent via named pipe - therefore,
+        // if the driver informs us of a handle which does not match that issued by our hooked syscall, we can assume that
+        // the calling process has used direct syscalls.
+        //
+        // This is part of my Ghost Hunting technique: https://fluxsec.red/edr-syscall-hooking
+        //
+        if let Some(process) = self.processes.get_mut(&pid) {
+            // if its empty, then that is bad!
+            if process.ghost_hunting_timers.is_empty() {
+                // todo this is bad and risk score needs adding
+            } else {
+                // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
+                let mut index = 0;
+                let mut matched = false;
+                for item in process.ghost_hunting_timers.clone() {
+                    if item.risk_multiplier == GhostHuntRiskMultiplier::OpenProcess {
+                        process.ghost_hunting_timers.remove(index);
+                        matched = true;
+                        break;
+                    }
 
-            return;
+                    index += 1;
+                }
+
+                if matched == false {
+                    // todo this is bad, do risk score
+                }
+            }
         }
+
 
         // TODO: the below logic isn't quite right - it turns out after some experimentation assigning risk scores to 
         // handles is not a good measure of intent; tracking handles is still probably a good thing, however it begs the
@@ -253,7 +285,37 @@ impl ProcessMonitor {
             println!("[i] Risk score for the process {pid} {}: {}. Accessing: {} {:?}", p.process_image, p.risk_score, target, t);
         }
 
+    }
 
+
+    /// This function is responsible for polling all Ghost Hunting timers to try match up hooked syscall API calls
+    /// with kernel events sent from our driver.
+    /// 
+    /// This is part of my Ghost Hunting technique https://fluxsec.red/edr-syscall-hooking
+    pub fn poll_ghost_timer(&mut self) {
+        //
+        // For each process we are tracking; determine if any timers are active from syscall stubs. If no timers are active then
+        // we can simply ignore them. If they are active, then we should have received a driver notification matching the event
+        // the syscall hooked within that time frame. If no such event is received; something untoward is going on, and as such,
+        // elevate the risk score of the process.
+        //
+
+        const MAX_WAIT: Duration = Duration::from_secs(2);
+
+        for (_, process) in &self.processes {
+            //
+            // In here process each hooked syscall where we expect an emission from the kernel
+            //
+            if !process.ghost_hunting_timers.is_empty() {
+                for item in &process.ghost_hunting_timers {
+                    if let Ok(t) = item.timer.elapsed() {
+                        if t > MAX_WAIT {
+                            // todo BAD PROCESS APPLY RISK MULTIPLIER
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
