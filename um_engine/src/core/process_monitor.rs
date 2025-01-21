@@ -1,10 +1,16 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::Duration};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{GhostHuntRiskMultiplier, Process};
+use shared_std::processes::{GhostHuntRiskScores, Process};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
+
+// Allow an impl block in this module, as opposed to implementing it outside of here; seeing as the impl is likely not required outside the 
+// engine. If it needs to be, then the impl will be moved to the shared crate.
+pub trait ProcessImpl {
+    fn update_process_risk_score(&mut self, score: i16);
+}
 
 static IGNORED_PROCESSES: [&str; 4] = [
     r"C:\Windows\System32\svchost.exe",
@@ -187,13 +193,13 @@ impl ProcessMonitor {
         if let Some(process) = self.processes.get_mut(&pid) {
             // if its empty, then that is bad!
             if process.ghost_hunting_timers.is_empty() {
-                // todo this is bad and risk score needs adding
+                process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
             } else {
                 // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
                 let mut index = 0;
                 let mut matched = false;
                 for item in process.ghost_hunting_timers.clone() {
-                    if item.risk_multiplier == GhostHuntRiskMultiplier::OpenProcess {
+                    if item.risk_multiplier == GhostHuntRiskScores::OpenProcess {
                         process.ghost_hunting_timers.remove(index);
                         matched = true;
                         break;
@@ -203,7 +209,7 @@ impl ProcessMonitor {
                 }
 
                 if matched == false {
-                    // todo this is bad, do risk score
+                    process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
                 }
             }
         }
@@ -301,20 +307,37 @@ impl ProcessMonitor {
         //
 
         const MAX_WAIT: Duration = Duration::from_secs(2);
-
-        for (_, process) in &self.processes {
+        
+        for (_, process) in self.processes.iter_mut() {
             //
             // In here process each hooked syscall where we expect an emission from the kernel
             //
             if !process.ghost_hunting_timers.is_empty() {
-                for item in &process.ghost_hunting_timers {
+                let mut index: usize = 0; // index of iterator over the ghost timers
+                for item in &process.clone().ghost_hunting_timers {
                     if let Ok(t) = item.timer.elapsed() {
                         if t > MAX_WAIT {
-                            // todo BAD PROCESS APPLY RISK MULTIPLIER
+                            process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
+                            process.ghost_hunting_timers.remove(index);
+                            break;
                         }
                     }
+
+                    index += 1;
                 }
             }
+        }
+    }
+}
+
+impl ProcessImpl for Process {
+    /// Updates the risk score for a given process. The input score argument may be positive or negative
+    /// within the bounds of the type; this will alter the score accordingly
+    fn update_process_risk_score(&mut self, score: i16) {
+        if self.risk_score.checked_add_signed(score).is_none() {
+            // If we overflowed the unsigned int / went below zero, just assign a score of 0
+            // todo this could possibly be abused by an adversary brute forcing a 0 score?
+            self.risk_score = 0;
         }
     }
 }

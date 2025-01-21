@@ -22,7 +22,7 @@ pub struct Process {
 pub struct GhostHuntingTimers {
     pub pid: u32,
     pub timer: SystemTime,
-    pub risk_multiplier: GhostHuntRiskMultiplier,
+    pub risk_multiplier: GhostHuntRiskScores,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,9 +35,8 @@ pub struct OpenProcessData {
     pub pid: u32,
 }
 
-/// A risk multiplier to modify the amount the risk score goes up by depending on which function is hooked.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum GhostHuntRiskMultiplier {
-    OpenProcess = 1,
-    CreateRemoteThread = 4,
+pub enum GhostHuntRiskScores {
+    OpenProcess = 20,
+    CreateRemoteThread = 60,
 }

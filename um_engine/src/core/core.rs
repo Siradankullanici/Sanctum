@@ -118,12 +118,12 @@ impl Core {
                 // Perform checks of process timers for Ghost Hunting
                 // What is Ghost Hunting? https://fluxsec.red/edr-syscall-hooking
                 //
+                self.process_monitor.write().await.poll_ghost_timer();
                 
 
                 /*
                     todo long term: 
                         - thread creation 
-                        - handle requests
                         - change of handle type (e.g. trying to evade detection)
                         - is the process doing bad things itself (allocating foreign mem)
                         
