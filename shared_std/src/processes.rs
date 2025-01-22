@@ -22,7 +22,7 @@ pub struct Process {
 pub struct GhostHuntingTimers {
     pub pid: u32,
     pub timer: SystemTime,
-    pub risk_multiplier: GhostHuntRiskScores,
+    pub syscall_type: SyscallType,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,7 +36,7 @@ pub struct OpenProcessData {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum GhostHuntRiskScores {
+pub enum SyscallType {
     OpenProcess = 20,
     CreateRemoteThread = 60,
 }

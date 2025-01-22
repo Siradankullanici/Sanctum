@@ -33,6 +33,7 @@
         "NTDLL",
         "ntoskrnl",
         "NTSTATUS",
+        "oneshot",
         "pathbuf",
         "PCHAR",
         "PCSTR",

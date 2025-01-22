@@ -17,8 +17,6 @@ unsafe extern "system" fn open_process(
 ) {
     if !client_id.is_null() {
         let pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
-        let x = format!("pid: {}, proc hand: {:?}\0", pid, process_handle);
-        unsafe { MessageBoxA(None, PCSTR::from_raw(x.as_ptr()), PCSTR::from_raw(x.as_ptr()), MB_OK) };
 
         let data = Syscall::OpenProcess(OpenProcessData{
             pid,

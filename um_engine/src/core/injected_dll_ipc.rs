@@ -1,19 +1,23 @@
 //! The Sanctum EDR DLL which is injected into processes needs a way to communicate
 //! with the engine, and this module provides the functionality for this.
 
-use std::{ffi::c_void, mem, ptr::null_mut, sync::atomic::AtomicPtr};
+use std::{ffi::c_void, mem, ptr::null_mut, sync::{atomic::AtomicPtr, Arc}};
 
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
-use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions};
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
+use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions, sync::mpsc::Sender};
 use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}};
 
 use crate::utils::log::{Log, LogLevel};
 
+use super::core::Core;
+
 static SECURITY_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
-pub async fn run_ipc_for_injected_dll() {
+pub async fn run_ipc_for_injected_dll(
+    tx: Sender<OpenProcessData>
+) {
     // Store the pointer in the atomic so we can safely access it across 
     let sa_ptr = create_security_attributes() as *mut c_void;
     SECURITY_PTR.store(sa_ptr, std::sync::atomic::Ordering::SeqCst);
@@ -24,6 +28,8 @@ pub async fn run_ipc_for_injected_dll() {
         .create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, sa_ptr)
         .expect("[-] Unable to create named pipe server for injected DLL")};
 
+    let tx_arc = Arc::new(tx);
+    
     let server = tokio::spawn(async move {
         
         loop {
@@ -32,7 +38,7 @@ pub async fn run_ipc_for_injected_dll() {
             logger.log(LogLevel::Info, "Waiting for IPC message from DLL");
             server.connect().await.expect("Could not get a client connection for injected DLL ipc");
             let mut connected_client = server;
-
+            
             // Construct the next server before sending the one we have onto a task, which ensures
             // the server isn't closed
             let sec_ptr = SECURITY_PTR.load(std::sync::atomic::Ordering::SeqCst);
@@ -41,6 +47,7 @@ pub async fn run_ipc_for_injected_dll() {
             }
             // SAFETY: null pointer checked above
             server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, sec_ptr).expect("Unable to create new version of IPC for injected DLL") };
+            let tx_cl = Arc::clone(&tx_arc);
             
             let client = tokio::spawn(async move {
                 println!("Hello from the client! {:?}", connected_client);
@@ -54,7 +61,16 @@ pub async fn run_ipc_for_injected_dll() {
 
                         // deserialise the request
                         match from_slice::<Syscall>(&buffer[..bytes_read]) {
-                            Ok(v) => logger.log(LogLevel::Success, &format!("Data from pipe: {:?}", v)),
+                            Ok(v) => {
+                                logger.log(LogLevel::Success, &format!("Data from pipe: {:?}. Sending to core..", v));
+                                match v {
+                                    Syscall::OpenProcess(open_process_data) => {
+                                        if let Err(e) = tx_cl.send(open_process_data).await {
+                                            logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
+                                        }
+                                    },
+                                }
+                            },
                             Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}")),
                         }
                     },

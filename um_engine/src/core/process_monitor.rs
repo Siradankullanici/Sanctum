@@ -1,7 +1,7 @@
-use std::{collections::HashMap, ffi::{c_void, CStr}, time::Duration};
+use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{GhostHuntRiskScores, Process};
+use shared_std::processes::{SyscallType, GhostHuntingTimers, Process};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -18,6 +18,8 @@ static IGNORED_PROCESSES: [&str; 4] = [
     r"C:\Windows\System32\RuntimeBroker.exe",
     r"C:\Windows\explorer.exe",
 ];
+
+static TARGET_EXE: &str = "malware";
 
 /// The ProcessMonitor is responsible for monitoring all processes running; this 
 /// structure holds a hashmap of all processes by the pid as an integer, and 
@@ -71,7 +73,7 @@ impl ProcessMonitor {
         // Inject the EDR's DLL. 
         // TODO for now to prevent system instability this will only be done for Notepad. This will need to be 
         // reflected at some point for all processes.
-        if proc.image_name.contains("malware") {
+        if proc.image_name.contains(TARGET_EXE) {
             println!("[i] Target process detected, injecting EDR DLL...");
             if let Err(e) = inject_edr_dll(proc.pid) {
                 logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
@@ -151,9 +153,13 @@ impl ProcessMonitor {
     pub fn add_handle_driver_notified(&mut self, pid: u64, target: u64, granted: u32, requested: u32) {
         // If the process is allowed to do as it pleases, then discard early.
         if let Some(process) = self.processes.get(&pid) {
-            if process.allow_listed == true {
+            if process.allow_listed == true || !process.process_image.contains(TARGET_EXE) {
                 return;
             }
+        }
+
+        if pid == target {
+            return;
         }
 
         // If the source is our engine
@@ -193,16 +199,14 @@ impl ProcessMonitor {
         if let Some(process) = self.processes.get_mut(&pid) {
             // if its empty, then that is bad!
             if process.ghost_hunting_timers.is_empty() {
-                process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
-                // todo this is going to be a pain to debug? revisit next session - seeing as we only inject in malware.exe this is triggering for
-                // everything right now!
-                println!("******* RISK SCORE RAISED AS LIST WAS EMPTY");
+                // process.update_process_risk_score(SyscallType::OpenProcess as i16);
+                // println!("******* RISK SCORE RAISED AS LIST WAS EMPTY. Src: {}, target: {}", pid, target);
             } else {
                 // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
                 let mut index = 0;
                 let mut matched = false;
                 for item in process.ghost_hunting_timers.clone() {
-                    if item.risk_multiplier == GhostHuntRiskScores::OpenProcess {
+                    if item.syscall_type == SyscallType::OpenProcess {
                         process.ghost_hunting_timers.remove(index);
                         matched = true;
                         println!("+++++++++++++++++++++++++++++++++++++++++++++++ matched on open process! <3");
@@ -213,7 +217,7 @@ impl ProcessMonitor {
                 }
 
                 if matched == false {
-                    process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
+                    process.update_process_risk_score(SyscallType::OpenProcess as i16);
                     println!("******* RISK SCORE RAISED COULD NOT MATCH OPEN PROCESS CALL");
                 }
             }
@@ -322,7 +326,7 @@ impl ProcessMonitor {
                 for item in &process.clone().ghost_hunting_timers {
                     if let Ok(t) = item.timer.elapsed() {
                         if t > MAX_WAIT {
-                            process.update_process_risk_score(GhostHuntRiskScores::OpenProcess as i16);
+                            process.update_process_risk_score(SyscallType::OpenProcess as i16);
                             process.ghost_hunting_timers.remove(index);
                             println!("******* RISK SCORE RAISED AS TIMER EXCEEDED");
                             break;
@@ -333,6 +337,23 @@ impl ProcessMonitor {
                 }
             }
         }
+    }
+
+    /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made
+    pub fn open_process_notification_syscall_via_dll(&mut self, pid: u64) {
+        if let Some(process) = self.processes.get_mut(&pid) {
+            process.ghost_hunting_timers.push(GhostHuntingTimers {
+                pid: pid as u32,
+                timer: SystemTime::now(),
+                syscall_type: SyscallType::OpenProcess,
+            });
+            println!("Timers look like: {:?}", process.ghost_hunting_timers);
+        } else {
+            // todo ok something very wrong if this gets called!!
+            let log = Log::new();
+            log.log(LogLevel::NearFatal, "Open Process from DLL request made that can not be found in active process list.");
+        }
+
     }
 }
 

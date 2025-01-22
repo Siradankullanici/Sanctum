@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
 use shared_std::processes::Process;
-use tokio::{sync::{Mutex, RwLock}, time::sleep};
+use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
@@ -54,16 +54,27 @@ impl Core {
 
         // extend the newly created local processes type from the results of the snapshot
         self.process_monitor.write().await.extend_processes(snapshot_processes);
+
+        let (tx, mut rx) = mpsc::channel(32);
         
         // Start the IPC server for the injected DLL to communicate with the core
         tokio::spawn(async {
-            run_ipc_for_injected_dll().await;
+            run_ipc_for_injected_dll(tx).await;
         });
 
         //
         // Enter the polling & decision making loop, this here is the core / engine of the usermode engine.
         //
         loop {
+            // See if there is a message from the injected DLL
+            if let Ok(open_process_data) = rx.try_recv() {
+                println!("Syscall received sent from the channel: {:?}", open_process_data);
+                let mut lock = self.process_monitor.write().await;
+                lock.open_process_notification_syscall_via_dll(open_process_data.pid as u64);
+            }
+
+            println!("Ok done");
+
             // contact the driver and get any messages from the kernel 
             // todo needing to unlock the driver manager is an unnecessary bottleneck 
             let driver_response = {

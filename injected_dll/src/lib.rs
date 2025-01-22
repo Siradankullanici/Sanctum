@@ -48,10 +48,6 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
 
     let stub_addresses = StubAddresses::new();
 
-    unsafe {
-        MessageBoxA(None, s!("b4!"), s!("b4!"), MB_OK);
-    }
-
     patch_ntdll(&stub_addresses);
 
     resume_all_threads(suspended_handles);
