@@ -73,8 +73,6 @@ impl Core {
                 lock.ghost_hunt_open_process_add(open_process_data.pid as u64, ApiOrigin::SyscallHook);
             }
 
-            println!("Ok done");
-
             // contact the driver and get any messages from the kernel 
             // todo needing to unlock the driver manager is an unnecessary bottleneck 
             let driver_response = {
