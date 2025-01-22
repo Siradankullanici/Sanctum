@@ -10,7 +10,6 @@ use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllow
 
 use crate::utils::log::{Log, LogLevel};
 
-use super::core::Core;
 
 static SECURITY_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 

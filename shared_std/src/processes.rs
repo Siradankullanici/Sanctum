@@ -23,6 +23,7 @@ pub struct GhostHuntingTimers {
     pub pid: u32,
     pub timer: SystemTime,
     pub syscall_type: SyscallType,
+    pub origin: ApiOrigin,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,10 +34,18 @@ pub enum Syscall {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OpenProcessData {
     pub pid: u32,
+    pub target_pid: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum SyscallType {
     OpenProcess = 20,
     CreateRemoteThread = 60,
+}
+
+/// Defines whether a syscall type API was caught in the kernel or in a syscall hook
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ApiOrigin {
+    Kernel,
+    SyscallHook,
 }

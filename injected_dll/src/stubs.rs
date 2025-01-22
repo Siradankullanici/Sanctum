@@ -4,7 +4,7 @@ use std::{arch::asm, ffi::c_void, fs::OpenOptions, io::Write, thread::sleep, tim
 
 use serde_json::to_vec;
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
-use windows::{core::PCSTR, Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::WindowsProgramming::CLIENT_ID, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use windows::Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::{Threading::GetCurrentProcessId, WindowsProgramming::CLIENT_ID}};
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
 /// any process this DLL is injected into.
@@ -16,10 +16,12 @@ unsafe extern "system" fn open_process(
     client_id: *mut CLIENT_ID,
 ) {
     if !client_id.is_null() {
-        let pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
+        let target_pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
+        let pid = unsafe { GetCurrentProcessId() };
 
         let data = Syscall::OpenProcess(OpenProcessData{
             pid,
+            target_pid,
         });
 
         // send information to the engine via IPC; do not use Tokio as we don't want the async runtime in our processes..

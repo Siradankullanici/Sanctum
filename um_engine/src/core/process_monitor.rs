@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{SyscallType, GhostHuntingTimers, Process};
+use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, Syscall, SyscallType};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -196,32 +196,33 @@ impl ProcessMonitor {
         //
         // This is part of my Ghost Hunting technique: https://fluxsec.red/edr-syscall-hooking
         //
-        if let Some(process) = self.processes.get_mut(&pid) {
-            // if its empty, then that is bad!
-            if process.ghost_hunting_timers.is_empty() {
-                // process.update_process_risk_score(SyscallType::OpenProcess as i16);
-                // println!("******* RISK SCORE RAISED AS LIST WAS EMPTY. Src: {}, target: {}", pid, target);
-            } else {
-                // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
-                let mut index = 0;
-                let mut matched = false;
-                for item in process.ghost_hunting_timers.clone() {
-                    if item.syscall_type == SyscallType::OpenProcess {
-                        process.ghost_hunting_timers.remove(index);
-                        matched = true;
-                        println!("+++++++++++++++++++++++++++++++++++++++++++++++ matched on open process! <3");
-                        break;
-                    }
+        // if let Some(process) = self.processes.get_mut(&pid) {
+        //     // if its empty, then that is bad!
+        //     if process.ghost_hunting_timers.is_empty() {
+        //         // process.update_process_risk_score(SyscallType::OpenProcess as i16);
+        //         // println!("******* RISK SCORE RAISED AS LIST WAS EMPTY. Src: {}, target: {}", pid, target);
+        //     } else {
+        //         // otherwise, check and see whether we have the handle from the syscall; if so remove it and we good!
+        //         let mut index = 0;
+        //         let mut matched = false;
+        //         for item in process.ghost_hunting_timers.clone() {
+        //             if item.syscall_type == SyscallType::OpenProcess {
+        //                 process.ghost_hunting_timers.remove(index);
+        //                 matched = true;
+        //                 println!("+++++++++++++++++++++++++++++++++++++++++++++++ matched on open process! <3");
+        //                 break;
+        //             }
 
-                    index += 1;
-                }
+        //             index += 1;
+        //         }
 
-                if matched == false {
-                    process.update_process_risk_score(SyscallType::OpenProcess as i16);
-                    println!("******* RISK SCORE RAISED COULD NOT MATCH OPEN PROCESS CALL");
-                }
-            }
-        }
+        //         if matched == false {
+        //             process.update_process_risk_score(SyscallType::OpenProcess as i16);
+        //             println!("******* RISK SCORE RAISED COULD NOT MATCH OPEN PROCESS CALL");
+        //         }
+        //     }
+        // }
+        self.ghost_hunt_open_process_add(pid, ApiOrigin::Kernel);
 
 
         // TODO: the below logic isn't quite right - it turns out after some experimentation assigning risk scores to 
@@ -340,14 +341,57 @@ impl ProcessMonitor {
     }
 
     /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made
-    pub fn open_process_notification_syscall_via_dll(&mut self, pid: u64) {
+    pub fn ghost_hunt_open_process_add(&mut self, pid: u64, syscall_origin: ApiOrigin) {
         if let Some(process) = self.processes.get_mut(&pid) {
-            process.ghost_hunting_timers.push(GhostHuntingTimers {
-                pid: pid as u32,
-                timer: SystemTime::now(),
-                syscall_type: SyscallType::OpenProcess,
-            });
-            println!("Timers look like: {:?}", process.ghost_hunting_timers);
+            //
+            // If the timers are empty; then its the first in so we can add it to the list straight up.
+            // Else, we will look for a match on the type; if we 
+            //
+            if process.ghost_hunting_timers.is_empty() {
+                process.ghost_hunting_timers.push(GhostHuntingTimers {
+                    pid: pid as u32,
+                    timer: SystemTime::now(),
+                    syscall_type: SyscallType::OpenProcess,
+                    origin: syscall_origin,
+                });
+            } else {
+                let mut index: usize = 0;
+                for timer in &mut process.ghost_hunting_timers {
+                    match syscall_origin {
+                        //
+                        // If the origin was from the kernel, then we are looking to match on an inbound equivalent 
+                        // notification from a hooked syscall; and vice-versa for if the first notification came from a 
+                        // syscall.
+                        // If that condition is true; then remove that item from the queue. If not - do not remove and add
+                        // a new queued item. The timers will then catch any bad state.
+                        // We want to return out of this operation once it has completed. If there was not a successful match
+                        // then add it - the timer will take care of the ghost hunting process.
+                        // 
+                        ApiOrigin::Kernel => {
+                            if timer.origin == ApiOrigin::SyscallHook && timer.syscall_type == SyscallType::OpenProcess {
+                                let _ = process.ghost_hunting_timers.remove(index);
+                                return;
+                            }
+                        },
+                        ApiOrigin::SyscallHook => {
+                            if timer.origin == ApiOrigin::Kernel && timer.syscall_type == SyscallType::OpenProcess {
+                                let _ = process.ghost_hunting_timers.remove(index);
+                                return;
+                            }
+                        },
+                    }
+
+                    index += 1;
+                }
+
+                // we did not match, so add the element 
+                process.ghost_hunting_timers.push(GhostHuntingTimers {
+                    pid: pid as u32,
+                    timer: SystemTime::now(),
+                    syscall_type: SyscallType::OpenProcess,
+                    origin: syscall_origin,
+                });
+            }
         } else {
             // todo ok something very wrong if this gets called!!
             let log = Log::new();

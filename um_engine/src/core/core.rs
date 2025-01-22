@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::Process;
+use shared_std::processes::{ApiOrigin, Process};
 use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
@@ -70,7 +70,7 @@ impl Core {
             if let Ok(open_process_data) = rx.try_recv() {
                 println!("Syscall received sent from the channel: {:?}", open_process_data);
                 let mut lock = self.process_monitor.write().await;
-                lock.open_process_notification_syscall_via_dll(open_process_data.pid as u64);
+                lock.ghost_hunt_open_process_add(open_process_data.pid as u64, ApiOrigin::SyscallHook);
             }
 
             println!("Ok done");
