@@ -316,7 +316,7 @@ impl ProcessMonitor {
         // elevate the risk score of the process.
         //
 
-        const MAX_WAIT: Duration = Duration::from_secs(2);
+        const MAX_WAIT: Duration = Duration::from_millis(600);
         
         for (_, process) in self.processes.iter_mut() {
             //
