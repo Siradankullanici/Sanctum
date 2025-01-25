@@ -26,7 +26,7 @@ impl Engine {
         //
 
         // core
-        let core = Arc::new(Core::from(60));
+        let core = Arc::new(Core::from(20));
         let core_umipc = Arc::clone(&core);
 
         // file scanner

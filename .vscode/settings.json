@@ -13,6 +13,7 @@
         "DACL",
         "dont",
         "drvipc",
+        "EPROCESS",
         "filescanner",
         "genericifies",
         "HINSTANCE",
