@@ -361,7 +361,7 @@ impl ProcessMonitor {
         let process = if let Some(p) = self.processes.get_mut(&pid) {
             p
         } else {
-            log.log(LogLevel::Error, &format!("Could not find pid {pid} from VirtualAllocEx signal from injected DLL."));
+            log.log(LogLevel::Error, &format!("Could not find pid {pid} from ZwAllocateVirtualMemory signal from {:?}.", syscall_origin));
             return;
         };
         
