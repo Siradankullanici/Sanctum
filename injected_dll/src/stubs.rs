@@ -69,11 +69,11 @@ unsafe extern "system" fn virtual_alloc_ex(
     // todo - future do self alloc
     //
 
-    let this_pid = unsafe { GetCurrentProcessId() };
+    let pid = unsafe { GetCurrentProcessId() };
     let remote_pid = unsafe { GetProcessId(process_handle) };
 
     // send telemetry in the case of a remote allocation
-    if this_pid != remote_pid {
+    if pid != remote_pid {
         let region_size_checked = if region_size.is_null() {
             0
         } else {
@@ -88,6 +88,7 @@ unsafe extern "system" fn virtual_alloc_ex(
                 allocation_type,
                 protect,
                 remote_pid,
+                pid,
             }
         ));
     }

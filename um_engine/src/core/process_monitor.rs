@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, Syscall, SyscallType};
+use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, Syscall, SyscallType, VirtualAllocExData};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -10,6 +10,7 @@ use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 // engine. If it needs to be, then the impl will be moved to the shared crate.
 pub trait ProcessImpl {
     fn update_process_risk_score(&mut self, score: i16);
+    fn add_ghost_hunt_timer(&mut self, syscall_origin: ApiOrigin, syscall_type: SyscallType);
 }
 
 static IGNORED_PROCESSES: [&str; 4] = [
@@ -343,60 +344,28 @@ impl ProcessMonitor {
     /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made
     pub fn ghost_hunt_open_process_add(&mut self, pid: u64, syscall_origin: ApiOrigin) {
         if let Some(process) = self.processes.get_mut(&pid) {
-            //
-            // If the timers are empty; then its the first in so we can add it to the list straight up.
-            // Else, we will look for a match on the type; if we 
-            //
-            if process.ghost_hunting_timers.is_empty() {
-                process.ghost_hunting_timers.push(GhostHuntingTimers {
-                    pid: pid as u32,
-                    timer: SystemTime::now(),
-                    syscall_type: SyscallType::OpenProcess,
-                    origin: syscall_origin,
-                });
-            } else {
-                let mut index: usize = 0;
-                for timer in &mut process.ghost_hunting_timers {
-                    match syscall_origin {
-                        //
-                        // If the origin was from the kernel, then we are looking to match on an inbound equivalent 
-                        // notification from a hooked syscall; and vice-versa for if the first notification came from a 
-                        // syscall.
-                        // If that condition is true; then remove that item from the queue. If not - do not remove and add
-                        // a new queued item. The timers will then catch any bad state.
-                        // We want to return out of this operation once it has completed. If there was not a successful match
-                        // then add it - the timer will take care of the ghost hunting process.
-                        // 
-                        ApiOrigin::Kernel => {
-                            if timer.origin == ApiOrigin::SyscallHook && timer.syscall_type == SyscallType::OpenProcess {
-                                let _ = process.ghost_hunting_timers.remove(index);
-                                return;
-                            }
-                        },
-                        ApiOrigin::SyscallHook => {
-                            if timer.origin == ApiOrigin::Kernel && timer.syscall_type == SyscallType::OpenProcess {
-                                let _ = process.ghost_hunting_timers.remove(index);
-                                return;
-                            }
-                        },
-                    }
-
-                    index += 1;
-                }
-
-                // we did not match, so add the element 
-                process.ghost_hunting_timers.push(GhostHuntingTimers {
-                    pid: pid as u32,
-                    timer: SystemTime::now(),
-                    syscall_type: SyscallType::OpenProcess,
-                    origin: syscall_origin,
-                });
-            }
+            process.add_ghost_hunt_timer(syscall_origin, SyscallType::OpenProcess);
         } else {
             // todo ok something very wrong if this gets called!!
             let log = Log::new();
             log.log(LogLevel::NearFatal, "Open Process from DLL request made that can not be found in active process list.");
         }
+    }
+
+    /// Handle a VirtualAllocEx signal being received from a remote process.
+    pub fn virtual_alloc_ex_signal(&mut self, signal: VirtualAllocExData) {
+        let log = Log::new();
+
+        // select the process
+        let pid = signal.pid as u64;
+        let mut process = if let Some(p) = self.processes.get_mut(&pid) {
+            p
+        } else {
+            log.log(LogLevel::Error, &format!("Could not find pid {pid} from VirtualAllocEx signal from injected DLL."));
+            return;
+        };
+
+
 
     }
 }
@@ -412,6 +381,63 @@ impl ProcessImpl for Process {
             self.risk_score = 0;
         }
     }
+    
+    /// Start a ghost hunt timer for a given API you are monitoring for Ghost Hunting.
+    /// 
+    /// This function does not deal with additional ghost hunting parameters, environment logic etc, this function deals
+    /// solely with the handling of a ghost hunt timer.
+    /// 
+    /// In the event an API timer is added, and one exists from the opposite source, then it will be removed as per my 
+    /// ghost hunting technique - this means there was a successful match and no apparent syscall evasion took place.
+    fn add_ghost_hunt_timer(&mut self, syscall_origin: ApiOrigin, syscall_type: SyscallType) {
+            //
+            // If the timers are empty; then its the first in so we can add it to the list straight up.
+            // Else, we will look for a match on the type; if we 
+            //
+            if self.ghost_hunting_timers.is_empty() {
+                self.ghost_hunting_timers.push(GhostHuntingTimers {
+                    timer: SystemTime::now(),
+                    syscall_type,
+                    origin: syscall_origin,
+                });
+            } else {
+                let mut index: usize = 0;
+                for timer in &mut self.ghost_hunting_timers {
+                    match syscall_origin {
+                        //
+                        // If the origin was from the kernel, then we are looking to match on an inbound equivalent 
+                        // notification from a hooked syscall; and vice-versa for if the first notification came from a 
+                        // syscall.
+                        // If that condition is true; then remove that item from the queue. If not - do not remove and add
+                        // a new queued item. The timers will then catch any bad state.
+                        // We want to return out of this operation once it has completed. If there was not a successful match
+                        // then add it - the timer will take care of the ghost hunting process.
+                        // 
+                        ApiOrigin::Kernel => {
+                            if timer.origin == ApiOrigin::SyscallHook && timer.syscall_type == SyscallType::OpenProcess {
+                                let _ = self.ghost_hunting_timers.remove(index);
+                                return;
+                            }
+                        },
+                        ApiOrigin::SyscallHook => {
+                            if timer.origin == ApiOrigin::Kernel && timer.syscall_type == SyscallType::OpenProcess {
+                                let _ = self.ghost_hunting_timers.remove(index);
+                                return;
+                            }
+                        },
+                    }
+
+                    index += 1;
+                }
+
+                // we did not match, so add the element 
+                self.ghost_hunting_timers.push(GhostHuntingTimers {
+                    timer: SystemTime::now(),
+                    syscall_type,
+                    origin: syscall_origin,
+                });
+            }
+        }
 }
 
 /// Enumerate all processes and add them to the active process monitoring hashmap.

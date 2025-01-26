@@ -20,7 +20,6 @@ pub struct Process {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GhostHuntingTimers {
-    pub pid: u32,
     pub timer: SystemTime,
     pub syscall_type: SyscallType,
     pub origin: ApiOrigin,
@@ -55,6 +54,8 @@ pub struct VirtualAllocExData {
     pub protect: u32,
     /// The pid in which the allocation is taking place in
     pub remote_pid: u32,
+    /// The pid of the process calling VirtualAllocEx
+    pub pid: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
