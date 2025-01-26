@@ -33,7 +33,6 @@ fn DllMain(_: usize, dw_reason: u32, _: usize) -> i32 {
 /// Initialise the DLL by resolving function pointers to our syscall hook callbacks. 
 unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
 
-    
     //
     // The order of setup will be to:
     // 1) Suspend all threads except for this thread.
@@ -152,7 +151,7 @@ impl<'a> StubAddresses<'a> {
     }
 }
 
-/// Patches hooked NTDLL functions with our flow redirection
+/// Patches hooks into NTDLL functions to redirect execution to our DLL so we can inspect params
 fn patch_ntdll(addresses: &StubAddresses) {
     for (_, item) in &addresses.addresses {
         let buffer: &[u8] = &[

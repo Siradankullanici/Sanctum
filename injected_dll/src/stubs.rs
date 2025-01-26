@@ -76,11 +76,13 @@ unsafe extern "system" fn virtual_alloc_ex(
 
     let ssn = 0x18;
 
+    // todo IPC to EDR engine
+
     unsafe {
         asm!(
-            "sub rsp, 0x38", // reserve shadow space + 8 byte ptr as it expects a stack of that size
-            "mov [rsp + 0x30], {1}", // 8 byte ptr + 32 byte shadow space + 8 bytes offset from 5th arg
-            "mov [rsp + 0x28], {0}", // 8 byte ptr + 32 byte shadow space
+            "sub rsp, 0x38",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
+            "mov [rsp + 0x30], {1}",    // 8 byte ptr + 32 byte shadow space + 8 bytes offset from 5th arg
+            "mov [rsp + 0x28], {0}",    // 8 byte ptr + 32 byte shadow space
             "mov r10, rcx",
             "syscall",
             "add rsp, 0x38",
