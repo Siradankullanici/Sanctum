@@ -5,6 +5,7 @@ use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, HANDLE, STATUS_SUCC
 use windows::core::s;
 
 mod stubs;
+mod ipc;
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]

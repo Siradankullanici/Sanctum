@@ -15,7 +15,7 @@ static SECURITY_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
 pub async fn run_ipc_for_injected_dll(
-    tx: Sender<OpenProcessData>
+    tx: Sender<Syscall>
 ) {
     // Store the pointer in the atomic so we can safely access it across 
     let sa_ptr = create_security_attributes() as *mut c_void;
@@ -29,7 +29,7 @@ pub async fn run_ipc_for_injected_dll(
 
     let tx_arc = Arc::new(tx);
     
-    let server = tokio::spawn(async move {
+    let _ = tokio::spawn(async move {
         
         loop {
             let logger = Log::new();
@@ -46,10 +46,13 @@ pub async fn run_ipc_for_injected_dll(
             }
             // SAFETY: null pointer checked above
             server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, sec_ptr).expect("Unable to create new version of IPC for injected DLL") };
-            let tx_cl = Arc::clone(&tx_arc);
+            let tx_cl: Arc<Sender<Syscall>> = Arc::clone(&tx_arc);
             
-            let client = tokio::spawn(async move {
-                println!("Hello from the client! {:?}", connected_client);
+            //
+            // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
+            // transmit the data via the mpsc to the core loop.
+            //
+            let _ = tokio::spawn(async move {
                 let mut buffer = vec![0; 1024];
                 match connected_client.read(&mut buffer).await {
                     Ok(bytes_read) => {
@@ -61,25 +64,23 @@ pub async fn run_ipc_for_injected_dll(
                         // deserialise the request
                         match from_slice::<Syscall>(&buffer[..bytes_read]) {
                             Ok(v) => {
-                                logger.log(LogLevel::Success, &format!("Data from pipe: {:?}. Sending to core..", v));
-                                match v {
-                                    Syscall::OpenProcess(open_process_data) => {
-                                        if let Err(e) = tx_cl.send(open_process_data).await {
-                                            logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
-                                        }
-                                    },
+                                logger.log(LogLevel::Success, &format!("Data from injected DLL pipe: {:?}.", v));
+                                if let Err(e) = tx_cl.send(v).await {
+                                    logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
                                 }
                             },
                             Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}")),
                         }
                     },
-                    Err(_) => todo!(),
+                    Err(e) => {
+                        logger.log(LogLevel::Error, &format!("Error reading IPC buffer. {e}"));
+                    },
                 }
-                // todo use the client 
             });
         }
     });
 }
+
 
 /// Create a permissive security descriptor allowing processes at all user levels, groups, etc to access this named pipe.
 /// This will ensure processes at a low privilege can communicate with the pipe

@@ -29,6 +29,7 @@ pub struct GhostHuntingTimers {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Syscall {
     OpenProcess(OpenProcessData),
+    VirtualAllocEx(VirtualAllocExData)
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -37,9 +38,29 @@ pub struct OpenProcessData {
     pub target_pid: u32,
 }
 
+
+/// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemorry
+/// is called by a process.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualAllocExData {
+    /// The base address is the base of the remote process which is stored as a usize but is actually a hex
+    /// address and will need converting if using as an address.
+    pub base_address: usize,
+    /// THe size of the allocated memory
+    pub region_size: usize,
+    /// A bitmask containing flags that specify the type of allocation to be performed. 
+    pub allocation_type: u32,
+    /// A bitmask containing page protection flags that specify the protection desired for the committed 
+    /// region of pages.
+    pub protect: u32,
+    /// The pid in which the allocation is taking place in
+    pub remote_pid: u32,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum SyscallType {
     OpenProcess = 20,
+    VirtualAllocExRWX = 50,
     CreateRemoteThread = 60,
 }
 

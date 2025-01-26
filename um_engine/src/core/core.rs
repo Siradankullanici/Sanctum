@@ -61,17 +61,23 @@ impl Core {
         tokio::spawn(async {
             run_ipc_for_injected_dll(tx).await;
         });
-        
+
         
         //
         // Enter the polling & decision making loop, this here is the core / engine of the usermode engine.
         //
         loop {
             // See if there is a message from the injected DLL
-            if let Ok(open_process_data) = rx.try_recv() {
-                println!("Syscall received sent from the channel: {:?}", open_process_data);
-                let mut lock = self.process_monitor.write().await;
-                lock.ghost_hunt_open_process_add(open_process_data.pid as u64, ApiOrigin::SyscallHook);
+            if let Ok(recv_syscall_notification) = rx.try_recv() {
+                match recv_syscall_notification {
+                    shared_std::processes::Syscall::OpenProcess(open_process_data) => {
+                        let mut lock = self.process_monitor.write().await;
+                        lock.ghost_hunt_open_process_add(open_process_data.pid as u64, ApiOrigin::SyscallHook);
+                    },
+                    shared_std::processes::Syscall::VirtualAllocEx(virtual_alloc_ex_data) => {
+                        
+                    },
+                }
             }
 
             // contact the driver and get any messages from the kernel 
