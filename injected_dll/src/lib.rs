@@ -68,7 +68,7 @@ struct Addresses {
 }
 
 impl<'a> StubAddresses<'a> {
-    /// Retrieve the virtual addresses of all callback functions for the DLL
+    /// Retrieve the virtual addresses of all callback functions for the DLL.
     fn new() -> Self {
 
         // Get a handle to ourself
@@ -151,7 +151,13 @@ impl<'a> StubAddresses<'a> {
     }
 }
 
-/// Patches hooks into NTDLL functions to redirect execution to our DLL so we can inspect params
+/// Patches hooks into NTDLL functions to redirect execution to our DLL so we can inspect params.
+/// 
+/// This works by doing the following:
+/// 
+/// 1) Overwrite a syscall stub we wish to hook with NOPs
+/// 2) Replace the starting bytes of that memory with a jmp to our EDR DLL function callback
+/// 3) Write the jmp instruction
 fn patch_ntdll(addresses: &StubAddresses) {
     for (_, item) in &addresses.addresses {
         let buffer: &[u8] = &[
