@@ -59,9 +59,9 @@ And the function to which execution jumps in the DLL:
 
 Here's two videos on syscall hooking from this project:
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/I2krfjCsRp0?si=B05WJzAsNBqUdfSx" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+[![YouTube Video](https://img.youtube.com/vi/I2krfjCsRp0/0.jpg)](https://www.youtube.com/watch?v=I2krfjCsRp0)
 
-<iframe width="560" height="315" src="https://www.youtube.com/embed/6cMPkwEsfvk?si=jUCFGvtC2TjdUaQi" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
+[![YouTube Video](https://img.youtube.com/vi/6cMPkwEsfvk/0.jpg)](https://www.youtube.com/watch?v=6cMPkwEsfvk)
 
 ## Antivirus scanning for malware detection (IOC hash):
 
