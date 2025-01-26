@@ -353,19 +353,20 @@ impl ProcessMonitor {
     }
 
     /// Handle a VirtualAllocEx signal being received from a remote process.
-    pub fn virtual_alloc_ex_signal(&mut self, signal: VirtualAllocExData) {
+    pub fn ghost_hunt_virtual_alloc_ex_add(&mut self, signal: VirtualAllocExData, syscall_origin: ApiOrigin) {
         let log = Log::new();
 
         // select the process
         let pid = signal.pid as u64;
-        let mut process = if let Some(p) = self.processes.get_mut(&pid) {
+        let process = if let Some(p) = self.processes.get_mut(&pid) {
             p
         } else {
             log.log(LogLevel::Error, &format!("Could not find pid {pid} from VirtualAllocEx signal from injected DLL."));
             return;
         };
-
-
+        
+        // todo determine different rwx permissions in the future once implemented.
+        process.add_ghost_hunt_timer(syscall_origin, SyscallType::VirtualAllocExRWX);
 
     }
 }
