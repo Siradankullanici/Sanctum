@@ -1,5 +1,7 @@
-use std::{arch::asm, ffi::c_void};
-use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::{DebugActiveProcess, WriteProcessMemory}, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_ALL_ACCESS, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+#![feature(naked_functions)]
+
+use std::{collections::HashMap, ffi::c_void};
+use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use windows::core::s;
 
 mod stubs;
@@ -28,27 +30,25 @@ fn DllMain(_: usize, dw_reason: u32, _: usize) -> i32 {
     1
 }
 
-/// Initialise the DLL by resolving function pointers to our syscall hook callbacks.
+/// Initialise the DLL by resolving function pointers to our syscall hook callbacks. 
 unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
 
+    
     //
     // The order of setup will be to:
     // 1) Suspend all threads except for this thread.
     // 2) Perform all modification and patching of the current process.
     // 3) Resume all threads
     //
-
-    // get all thread ID's except the current thread
-    let thread_ids = get_thread_ids();
-    if thread_ids.is_err() {
-        todo!()
-    }
-    let thread_ids = thread_ids.unwrap();
-    let suspended_handles= suspend_all_threads(thread_ids);
+    
+    // suspend the threads
+    let suspended_handles= suspend_all_threads();
+    unsafe { MessageBoxA(None, s!("break"), s!("break"), MB_OK) };
 
     let stub_addresses = StubAddresses::new();
 
     patch_ntdll(&stub_addresses);
+
 
     resume_all_threads(suspended_handles);
 
@@ -59,20 +59,16 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
 /// 
 /// The address of each function within the DLL will be used to overwrite memory in the syscall, allowing us to jmp
 /// to the address.
-pub struct StubAddresses {
-    edr: EdrAddresses,
-    ntdll: NtDll,
+pub struct StubAddresses<'a> {
+    addresses: HashMap<&'a str, Addresses>,
 }
 
-struct EdrAddresses {
-    open_process: usize,
+struct Addresses {
+    edr: usize,
+    ntdll: usize,
 }
 
-struct NtDll {
-    zw_open_process: usize,
-}
-
-impl StubAddresses {
+impl<'a> StubAddresses<'a> {
     /// Retrieve the virtual addresses of all callback functions for the DLL
     fn new() -> Self {
 
@@ -105,6 +101,16 @@ impl StubAddresses {
             Some(address) => address as *const (),
         } as usize;
 
+        // open_process
+        let virtual_alloc_stub = unsafe { GetProcAddress(h_sanc_dll, s!("virtual_alloc_ex")) };
+        let virtual_alloc_stub = match virtual_alloc_stub {
+            None => {
+                unsafe { MessageBoxA(None, s!("Could not get fn addr"), s!("Could not get fn addr"), MB_OK) };
+                panic!("Oh no :("); // todo dont panic a process?
+            },
+            Some(address) => address as *const (),
+        } as usize;
+
 
         //
         // Get function pointers to the functions we wish to hook
@@ -120,103 +126,105 @@ impl StubAddresses {
             Some(address) => address as *const (),
         } as usize;
 
+        // ZwAllocateVirtualMemory
+        let zwavm = unsafe { GetProcAddress(h_ntdll, s!("ZwAllocateVirtualMemory")) };
+        let zwavm = match zwavm {
+            None => {
+                unsafe { MessageBoxA(None, s!("Could not get fn addr"), s!("Could not get fn addr"), MB_OK) };
+                panic!("Oh no :("); // todo dont panic a process?
+            },
+            Some(address) => address as *const (),
+        } as usize;
+
+        let mut hm = HashMap::new();
+        hm.insert("ZwOpenProcess", Addresses {
+            edr: open_process_fn_addr,
+            ntdll: zwop,
+        });
+        hm.insert("ZwAllocateVirtualMemory", Addresses {
+            edr: virtual_alloc_stub,
+            ntdll: zwavm,
+        });
+
         Self {
-            edr: EdrAddresses{
-                open_process: open_process_fn_addr
-            },
-            ntdll: NtDll {
-                zw_open_process: zwop
-            },
+            addresses: hm,
         }
     }
 }
 
 /// Patches hooked NTDLL functions with our flow redirection
 fn patch_ntdll(addresses: &StubAddresses) {
-    // ZwOpenProcess
-    let buffer: &[u8] = &[
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90, 0x90,
-        0x90, 0x90,
-    ];
+    for (_, item) in &addresses.addresses {
+        let buffer: &[u8] = &[
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90, 0x90,
+            0x90, 0x90,
+        ];
 
-    let proc_hand = unsafe { GetCurrentProcess() };
-    let mut bytes_written: usize = 0;
-    let _ = unsafe {
-        WriteProcessMemory(
-            proc_hand, 
-            addresses.ntdll.zw_open_process as *const _,
-            buffer.as_ptr() as *const _, 
-            buffer.len(), 
-            Some(&mut bytes_written)
-        )
-    };
+        let proc_hand = unsafe { GetCurrentProcess() };
+        let mut bytes_written: usize = 0;
+        let _ = unsafe {
+            WriteProcessMemory(
+                proc_hand, 
+                item.ntdll as *const _,
+                buffer.as_ptr() as *const _, 
+                buffer.len(), 
+                Some(&mut bytes_written)
+            )
+        };
 
-    // write movabs rax, _ (thanks to https://defuse.ca/online-x86-assembler.htm#disassembly)
-    let mob_abs_rax: [u8; 2] = [0x48, 0xB8];
-    let _ = unsafe {
-        WriteProcessMemory(
-            proc_hand, 
-            addresses.ntdll.zw_open_process as *const _,
-            mob_abs_rax.as_ptr() as *const _, 
-            mob_abs_rax.len(), 
-            None,
-        )
-    };
+        // write movabs rax, _ (thanks to https://defuse.ca/online-x86-assembler.htm#disassembly)
+        let mob_abs_rax: [u8; 2] = [0x48, 0xB8];
+        let _ = unsafe {
+            WriteProcessMemory(
+                proc_hand, 
+                item.ntdll as *const _,
+                mob_abs_rax.as_ptr() as *const _, 
+                mob_abs_rax.len(), 
+                None,
+            )
+        };
 
-    //
-    // convert the address of the function to little endian (8) bytes and write them at the correct offset
-    //
-    let mut addr_bytes = [0u8; 8]; // 8 for ptr, 2 for call
-    let addr64 = addresses.edr.open_process as u64; // ensure we are 8-byte aligned
-    for (i, b) in addr_bytes.iter_mut().enumerate() {
-        *b = ((addr64 >> (i * 8)) & 0xFF) as u8;
+        //
+        // convert the address of the function to little endian (8) bytes and write them at the correct offset
+        //
+        let mut addr_bytes = [0u8; 8]; // 8 for ptr, 2 for call
+        let addr64 = item.edr as u64; // ensure we are 8-byte aligned
+        for (i, b) in addr_bytes.iter_mut().enumerate() {
+            *b = ((addr64 >> (i * 8)) & 0xFF) as u8;
+        }
+
+        // write it
+        let _ = unsafe {
+            WriteProcessMemory(
+                proc_hand, 
+                (item.ntdll + 2) as *const _,
+                addr_bytes.as_ptr() as *const _, 
+                addr_bytes.len(), 
+                None,
+            )
+        };
+
+        let jmp_bytes: &[u8] = &[0xFF, 0xE0];
+        let _ = unsafe {
+            WriteProcessMemory(
+                proc_hand,
+                (item.ntdll + 10) as *const _,
+                jmp_bytes.as_ptr() as *const _, 
+                jmp_bytes.len(), 
+                None,
+            )
+        };
+
     }
-
-    // write it
-    let _ = unsafe {
-        WriteProcessMemory(
-            proc_hand, 
-            (addresses.ntdll.zw_open_process + 2) as *const _,
-            addr_bytes.as_ptr() as *const _, 
-            addr_bytes.len(), 
-            None,
-        )
-    };
-
-    let jmp_bytes: &[u8] = &[0xFF, 0xE0];
-    let _ = unsafe {
-        WriteProcessMemory(
-            proc_hand,
-            (addresses.ntdll.zw_open_process + 10) as *const _,
-            jmp_bytes.as_ptr() as *const _, 
-            jmp_bytes.len(), 
-            None,
-        )
-    };
-
-    // unsafe { MessageBoxA(None, s!("Done writes"), s!("Done writes"), MB_OK) };
-
-
-    // unsafe {
-    //     asm!(
-    //         // move our VA into eax
-    //         "mov rax, {x}",
-    //         // call the function
-    //         "call rax",
-
-    //         x = in(reg) addresses.edr.open_process
-    //     );
-    // }
-
 
 }
 
@@ -224,7 +232,14 @@ fn patch_ntdll(addresses: &StubAddresses) {
 /// 
 /// # Returns
 /// A vector of the suspended handles
-fn suspend_all_threads(thread_ids: Vec<u32>) -> Vec<HANDLE> {
+fn suspend_all_threads() -> Vec<HANDLE> {
+    // get all thread ID's except the current thread
+    let thread_ids = get_thread_ids();
+    if thread_ids.is_err() {
+        todo!()
+    }
+    let thread_ids = thread_ids.unwrap();
+
     let mut suspended_handles: Vec<HANDLE> = vec![];
     for id in thread_ids {
         let h = unsafe { OpenThread(THREAD_SUSPEND_RESUME, false, id) };

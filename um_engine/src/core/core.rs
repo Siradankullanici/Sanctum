@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::{ApiOrigin, Process};
+use shared_std::processes::{ApiOrigin, OpenProcessData, Process};
 use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
@@ -55,13 +55,14 @@ impl Core {
         // extend the newly created local processes type from the results of the snapshot
         self.process_monitor.write().await.extend_processes(snapshot_processes);
 
-        let (tx, mut rx) = mpsc::channel(32);
+        let (tx, mut rx) = mpsc::channel(1000);
         
         // Start the IPC server for the injected DLL to communicate with the core
         tokio::spawn(async {
             run_ipc_for_injected_dll(tx).await;
         });
-
+        
+        
         //
         // Enter the polling & decision making loop, this here is the core / engine of the usermode engine.
         //

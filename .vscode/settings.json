@@ -63,16 +63,19 @@
         "SANC",
         "serde",
         "SNAPALL",
+        "SNAPTHREAD",
         "SPSVCINST",
         "svchost",
         "symlnk",
         "Taskmgr",
+        "THREADENTRY",
         "Toolhelp",
         "umapi",
         "umipc",
         "uncategorized",
         "Uninit",
         "usermode",
+        "vaddr",
         "WORKITEM"
     ]
 }

@@ -1,10 +1,10 @@
 //! Stubs that act as callback functions from syscalls.
 
-use std::{arch::asm, ffi::c_void, fs::OpenOptions, io::Write, thread::sleep, time::Duration};
+use std::{arch::{asm, naked_asm}, ffi::c_void, fs::OpenOptions, io::Write, thread::sleep, time::Duration};
 
 use serde_json::to_vec;
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
-use windows::Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::{Threading::GetCurrentProcessId, WindowsProgramming::CLIENT_ID}};
+use windows::{core::s, Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::{Threading::GetCurrentProcessId, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
 /// any process this DLL is injected into.
@@ -59,6 +59,40 @@ unsafe extern "system" fn open_process(
             in("r9") client_id,
 
             options(nostack, preserves_flags)
+        );
+    }
+}
+
+/// Syscall hook for ZwAllocateVirtualMemory
+#[unsafe(no_mangle)]
+unsafe extern "system" fn virtual_alloc_ex(
+    process_handle: HANDLE,
+    base_address: *mut c_void,
+    zero_bits: usize,
+    region_size: *mut usize,
+    allocation_type: u32,
+    protect: u32,
+) {
+
+    let ssn = 0x18;
+
+    unsafe {
+        asm!(
+            "sub rsp, 0x38", // reserve shadow space + 8 byte ptr as it expects a stack of that size
+            "mov [rsp + 0x30], {1}", // 8 byte ptr + 32 byte shadow space + 8 bytes offset from 5th arg
+            "mov [rsp + 0x28], {0}", // 8 byte ptr + 32 byte shadow space
+            "mov r10, rcx",
+            "syscall",
+            "add rsp, 0x38",
+
+            in(reg) allocation_type,
+            in(reg) protect,
+            in("rax") ssn,
+            in("rcx") process_handle.0,
+            in("rdx") base_address,
+            in("r8") zero_bits,
+            in("r9") region_size,
+            options(nostack),
         );
     }
 }

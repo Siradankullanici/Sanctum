@@ -10,7 +10,7 @@ extern crate alloc;
 #[cfg(not(test))]
 extern crate wdk_panic;
 
-use core::{core_callback_notify_ps, ProcessHandleCallback};
+use core::{core_callback_notify_ps_create, ProcessHandleCallback};
 use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::{boxed::Box, format};
 use ffi::IoGetCurrentIrpStackLocation;
@@ -164,7 +164,7 @@ pub unsafe extern "C" fn configure_driver(
     //
 
     // Intercepting process creation
-    let res = PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps), FALSE as u8);
+    let res = PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps_create), FALSE as u8);
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}.");
         return res;
@@ -203,7 +203,7 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     //
 
     // drop the callback for new process interception
-    let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps), TRUE as u8) };
+    let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(core_callback_notify_ps_create), TRUE as u8) };
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Error removing PsSetCreateProcessNotifyRoutineEx from callback routines. Error: {res}");
     }
