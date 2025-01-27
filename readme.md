@@ -99,7 +99,9 @@ Driver checks compatibility with the client version and will panic (usermode) an
 
 1) Cargo (obviously..)
 2) Nightly
-3) cargo make
+3) From the developer command prompt:
+   1) `cargo make`
+   2) `sign.bat` (This is important to sign the driver with the **custom** self signed cert for ETW access)
 4) Windows Driver Kit & Developer Console (as admin for building the driver)
 5) May wish to add a symlnk for .vscode/settings.json in the driver to that in the root for spelling etc.
 
@@ -107,3 +109,4 @@ Driver checks compatibility with the client version and will panic (usermode) an
 
 1) To see driver install config, regedit: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Sanctum.
 2) The app will create a location in %AppData% where the IOC file and settings are created. You will also need to drop the built driver into this location. A built driver is not shipped with this repo, so it must be built after cloned with cargo make from the driver directory.
+3) To use ETW:TI you must use a self signed cert with specific params. If this cert changes, need to recalculate the hash of it and apply it to the .rc hash field, get this from `To-Be-Signed Hash` from `ertmgr.exe -v target/debug/sanctum_package/sanctum.sys`.
