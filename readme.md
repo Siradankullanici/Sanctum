@@ -99,9 +99,10 @@ Driver checks compatibility with the client version and will panic (usermode) an
 
 1) Cargo (obviously..)
 2) Nightly
-3) From the developer command prompt:
+3) For ELAM: From the developer command prompt:
    1) `cargo make`
    2) `sign.bat` (This is important to sign the driver with the **custom** self signed cert for ETW access)
+   3) In the root sanctum, sign_elam.bat needs running to sign the elam runner binary with the **same** cert that signed the driver.
 4) Windows Driver Kit & Developer Console (as admin for building the driver)
 5) May wish to add a symlnk for .vscode/settings.json in the driver to that in the root for spelling etc.
 

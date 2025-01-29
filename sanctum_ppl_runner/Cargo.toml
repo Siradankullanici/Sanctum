@@ -2,6 +2,12 @@
 name = "sanctum_ppl_runner"
 version = "0.1.0"
 edition = "2024"
+build = "build.rs"
+
+[profile.release]
+strip = true
+lto = true
+codegen-units = 1
 
 [dependencies]
 windows = {version = "0.59.0", features = [
