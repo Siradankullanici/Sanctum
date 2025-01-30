@@ -4,7 +4,7 @@
 use std::{ffi::c_void, mem, os::windows::io::{AsHandle, AsRawHandle}, ptr::null_mut, sync::{atomic::AtomicPtr, Arc}};
 
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall, SyscallData}};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::{FALSE, GENERIC_ALL, HANDLE}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::{Pipes::GetNamedPipeClientProcessId, SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}}};
 
@@ -54,9 +54,6 @@ pub async fn run_ipc_for_injected_dll(
             //
             let _ = tokio::spawn(async move {
 
-                // todo record pid here
-                let pipe_pid = get_pid_from_pipe(&connected_client);
-
                 let mut buffer = vec![0; 1024];
                 match connected_client.read(&mut buffer).await {
                     Ok(bytes_read) => {
@@ -67,9 +64,32 @@ pub async fn run_ipc_for_injected_dll(
 
                         // deserialise the request
                         match from_slice::<Syscall>(&buffer[..bytes_read]) {
-                            Ok(v) => {
-                                logger.log(LogLevel::Success, &format!("Data from injected DLL pipe: {:?}.", v));
-                                if let Err(e) = tx_cl.send(v).await {
+                            Ok(syscall) => {
+
+                                // 
+                                // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
+                                // IPC from the malware saying you are performing an operation via a hooked syscall; when in actuality you are
+                                // using direct syscalls to evade detection etc.
+                                //
+                                // Therefore, in order to combat this we can enforce IPC messages to contain the HasPid trait, so that all inbound
+                                // IPC messages contain a pid. We can then compare the pid offered by the message, with the PID the pipe actually came
+                                // from to verify the message authenticity.
+                                //
+                                let pipe_pid = match get_pid_from_pipe(&connected_client) {
+                                    Some(p) => p,
+                                    None => {
+                                        // todo this is bad and should do something
+                                        eprintln!("!!!!!!!!!!!!! GOT NO PID");
+                                        todo!()
+                                    },
+                                };
+                                if pipe_pid != syscall.get_pid() {
+                                    // todo this is bad and should do something
+                                    eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
+                                }
+
+                                logger.log(LogLevel::Success, &format!("Data from injected DLL pipe: {:?}.", syscall));
+                                if let Err(e) = tx_cl.send(syscall).await {
                                     logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
                                 }
                             },

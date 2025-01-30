@@ -42,7 +42,16 @@ pub struct SyscallData<T: HasPid> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Syscall {
     OpenProcess(SyscallData<OpenProcessData>),
-    VirtualAllocEx(VirtualAllocExData)
+    VirtualAllocEx(SyscallData<VirtualAllocExData>)
+}
+
+impl Syscall {
+    pub fn get_pid(&self) -> u32 {
+        match self {
+            Syscall::OpenProcess(syscall_data) => syscall_data.inner.pid,
+            Syscall::VirtualAllocEx(syscall_data) => syscall_data.inner.pid,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

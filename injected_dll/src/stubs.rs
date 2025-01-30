@@ -79,13 +79,15 @@ unsafe extern "system" fn virtual_alloc_ex(
         };
     
         send_syscall_info_ipc(&Syscall::VirtualAllocEx(
-            VirtualAllocExData {
-                base_address: base_address as usize,
-                region_size: region_size_checked,
-                allocation_type,
-                protect,
-                remote_pid,
-                pid,
+            SyscallData { 
+                inner: VirtualAllocExData {
+                    base_address: base_address as usize,
+                    region_size: region_size_checked,
+                    allocation_type,
+                    protect,
+                    remote_pid,
+                    pid,
+                }
             }
         ));
     }
