@@ -1,12 +1,12 @@
 //! The Sanctum EDR DLL which is injected into processes needs a way to communicate
 //! with the engine, and this module provides the functionality for this.
 
-use std::{ffi::c_void, mem, ptr::null_mut, sync::{atomic::AtomicPtr, Arc}};
+use std::{ffi::c_void, mem, os::windows::io::{AsHandle, AsRawHandle}, ptr::null_mut, sync::{atomic::AtomicPtr, Arc}};
 
 use serde_json::from_slice;
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall}};
-use tokio::{io::AsyncReadExt, net::windows::named_pipe::ServerOptions, sync::mpsc::Sender};
-use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}};
+use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
+use windows::Win32::{Foundation::{FALSE, GENERIC_ALL, HANDLE}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::{Pipes::GetNamedPipeClientProcessId, SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}}};
 
 use crate::utils::log::{Log, LogLevel};
 
@@ -53,6 +53,10 @@ pub async fn run_ipc_for_injected_dll(
             // transmit the data via the mpsc to the core loop.
             //
             let _ = tokio::spawn(async move {
+
+                // todo record pid here
+                let pipe_pid = get_pid_from_pipe(&connected_client);
+
                 let mut buffer = vec![0; 1024];
                 match connected_client.read(&mut buffer).await {
                     Ok(bytes_read) => {
@@ -177,4 +181,22 @@ fn create_security_attributes() -> *mut SECURITY_ATTRIBUTES {
         Box::leak(Box::new(acl_buf));
         Box::leak(sa_box)
     }
+}
+
+/// Gets the PID that sent the named pipe, to ensure the pid we receive the message from is the same as the 
+/// pid wrapped inside the message - prevents false messages being sent to the server where an attacker may wish
+/// to use a raw syscall and spoof the pipe message.
+/// 
+/// # Returns
+/// - The PID as a u32 if success
+/// - Otherwise, None
+fn get_pid_from_pipe(connected_client: &NamedPipeServer) -> Option<u32> {
+    let handle = connected_client.as_handle().as_raw_handle();
+    let mut pid: u32 = 0;
+
+    if unsafe { GetNamedPipeClientProcessId(HANDLE(handle), &mut pid) }.is_err() {
+        return None;
+    }
+
+    Some(pid)
 }

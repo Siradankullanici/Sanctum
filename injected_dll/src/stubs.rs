@@ -1,14 +1,9 @@
 //! Stubs that act as callback functions from syscalls.
 
-use std::{arch::{asm, naked_asm}, ffi::c_void, fs::OpenOptions, io::Write, thread::sleep, time::Duration};
-
-use serde_json::to_vec;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{OpenProcessData, Syscall, VirtualAllocExData}};
-use windows::{core::s, Win32::{Foundation::{ERROR_PIPE_BUSY, HANDLE}, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
-
+use std::{arch::asm, ffi::c_void};
+use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExData};
+use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
 use crate::ipc::send_syscall_info_ipc;
-
-
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
 /// any process this DLL is injected into.
@@ -23,9 +18,11 @@ unsafe extern "system" fn open_process(
         let target_pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
         let pid = unsafe { GetCurrentProcessId() };
 
-        let data = Syscall::OpenProcess(OpenProcessData{
-            pid,
-            target_pid,
+        let data = Syscall::OpenProcess(SyscallData{
+            inner: OpenProcessData {
+                pid,
+                target_pid,
+            },
         });
 
         // send the telemetry to the engine

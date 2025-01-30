@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant, SystemTime};
+use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
@@ -25,9 +25,23 @@ pub struct GhostHuntingTimers {
     pub origin: ApiOrigin,
 }
 
+pub trait HasPid {
+    fn get_pid(&self) -> u32;
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SyscallData<T: HasPid> {
+    pub inner: T,
+}
+
+/// Wrap a syscall message with an enum so that we can send messages between the process we have hooked and our EDR engine.
+/// 
+/// # Note
+/// Each struct within the Syscall enum **MUST** contain the pid which it came from; which is required to ensure the integrity 
+/// of the Ghost Hunting process. This is enforced via the HasPid trait.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Syscall {
-    OpenProcess(OpenProcessData),
+    OpenProcess(SyscallData<OpenProcessData>),
     VirtualAllocEx(VirtualAllocExData)
 }
 
@@ -37,6 +51,11 @@ pub struct OpenProcessData {
     pub target_pid: u32,
 }
 
+impl HasPid for OpenProcessData {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
+}
 
 /// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemorry
 /// is called by a process.
@@ -56,6 +75,12 @@ pub struct VirtualAllocExData {
     pub remote_pid: u32,
     /// The pid of the process calling VirtualAllocEx
     pub pid: u32,
+}
+
+impl HasPid for VirtualAllocExData {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
