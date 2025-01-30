@@ -106,13 +106,14 @@ Driver checks compatibility with the client version and will panic (usermode) an
 
 ### Requirements:
 
-1) Cargo (obviously..)
-2) Nightly
+1) Cargo (obviously..).
+2) Nightly.
 3) For ELAM: From the developer command prompt:
-   1) `cargo make`
-   2) `sign.bat` (This is important to sign the driver with the **custom** self signed cert for ETW access)
-   3) In the root sanctum, sign_elam.bat needs running to sign the elam runner binary with the **same** cert that signed the driver.
-4) Windows Driver Kit & Developer Console (as admin for building the driver)
+   1) `cargo make`.
+   2) `sign.bat` (This is important to sign the driver with the **custom** self signed cert for ETW access).
+   3) `sanctum_ppl_runner` AND `etw_consumer` must be built in release mode.
+   4) In the root sanctum, sign_elam.bat needs running to sign the `sanctum_ppl_runner` AND `etw_consumer` binary with the **same** cert that signed the driver.
+4) Windows Driver Kit & Developer Console (as admin for building the driver).
 5) May wish to add a symlnk for .vscode/settings.json in the driver to that in the root for spelling etc.
 
 ## Helpful notes:
