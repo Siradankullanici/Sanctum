@@ -30,6 +30,15 @@ Rust is suited to operate in embedded and kernel environments through [libcore n
 
 The EDR code is logically separated in one solution into the kernel mode driver (the driver folder [found here](https://github.com/0xflux/sanctum/tree/master/driver)), the usermode engine ([found here](https://github.com/0xflux/sanctum/tree/master/um_engine)), and usermode DLL (todo).
 
+## ELAM and ETW
+
+This project now contains **Early Launch AntiMalware** driver technology, **Protected Process Light: Antimalware**, and **Event Tracing for Windows: Threat Intelligence**. Those crates are contained in this repo as they are all part of the same project.
+They can be found:
+
+- `elam_installer` - Installs the `ELAM` service
+- `sanctum_ppl_runner` - The `PPL` service 
+- `etw_consumer` = A child process that will be spawned from `sanctum_ppl_runner` which is able to consume `ETW: Threat Intelligence` thanks to `PPL`.
+
 # Usermode features
 
 The usermode aspect of this application includes a GUI for you to use as a native windows program. 
