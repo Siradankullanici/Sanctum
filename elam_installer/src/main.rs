@@ -1,6 +1,4 @@
-use std::ptr::null_mut;
-
-use windows::{core::{PCSTR, PCWSTR}, Win32::{Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING}, System::{Antimalware::InstallELAMCertificateInfo, Services::{ChangeServiceConfig2W, CreateServiceW, OpenSCManagerA, OpenSCManagerW, SC_MANAGER_ALL_ACCESS, SERVICE_CONFIG_LAUNCH_PROTECTED, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, SERVICE_LAUNCH_PROTECTED_ANTIMALWARE_LIGHT, SERVICE_LAUNCH_PROTECTED_INFO, SERVICE_WIN32_OWN_PROCESS}}}};
+use windows::{core::PCWSTR, Win32::{Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING}, System::{Antimalware::InstallELAMCertificateInfo, Services::{ChangeServiceConfig2W, CreateServiceW, OpenSCManagerW, SC_MANAGER_ALL_ACCESS, SERVICE_CONFIG_LAUNCH_PROTECTED, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL, SERVICE_LAUNCH_PROTECTED_ANTIMALWARE_LIGHT, SERVICE_LAUNCH_PROTECTED_INFO, SERVICE_WIN32_OWN_PROCESS}}}};
 
 fn main() {
     //
@@ -31,7 +29,7 @@ fn main() {
         Err(e) => panic!("[!] An error occurred whilst trying to open a handle to the driver. {e}"),
     };
 
-    if let Err(e) = unsafe { InstallELAMCertificateInfo(handle) } {
+    if let Err(_) = unsafe { InstallELAMCertificateInfo(handle) } {
         panic!("[!] Failed to install ELAM certificate.");
     }
 

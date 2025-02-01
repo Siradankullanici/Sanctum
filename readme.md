@@ -120,4 +120,4 @@ Driver checks compatibility with the client version and will panic (usermode) an
 
 1) To see driver install config, regedit: HKEY_LOCAL_MACHINE\SYSTEM\CurrentControlSet\Services\Sanctum.
 2) The app will create a location in %AppData% where the IOC file and settings are created. You will also need to drop the built driver into this location. A built driver is not shipped with this repo, so it must be built after cloned with cargo make from the driver directory.
-3) To use ETW:TI you must use a self signed cert with specific params. If this cert changes, need to recalculate the hash of it and apply it to the .rc hash field, get this from `To-Be-Signed Hash` from `ertmgr.exe -v target/debug/sanctum_package/sanctum.sys`.
+3) To use ETW:TI you must use a self signed cert with specific params. If this cert changes, need to recalculate the hash of it and apply it to the resources hash field in the build script, get this from `To-Be-Signed Hash` from `certmgr.exe -v target/debug/sanctum_package/sanctum.sys`.
