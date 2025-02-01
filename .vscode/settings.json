@@ -13,6 +13,7 @@
         "DACL",
         "dont",
         "drvipc",
+        "ENTRYW",
         "EPROCESS",
         "filescanner",
         "genericifies",
@@ -26,6 +27,7 @@
         "KMUTEX",
         "KSPIN",
         "libcore",
+        "LPPROC",
         "lpthread",
         "lsass",
         "movabs",
@@ -35,6 +37,7 @@
         "ntoskrnl",
         "NTSTATUS",
         "oneshot",
+        "pagehashes",
         "pathbuf",
         "PCHAR",
         "PCSTR",
@@ -65,6 +68,8 @@
         "SNAPALL",
         "SNAPTHREAD",
         "SPSVCINST",
+        "STARTUPINFO",
+        "STARTUPINFOEXW",
         "svchost",
         "symlnk",
         "Taskmgr",
@@ -76,6 +81,7 @@
         "Uninit",
         "usermode",
         "vaddr",
-        "WORKITEM"
+        "WORKITEM",
+        "wstring"
     ]
 }

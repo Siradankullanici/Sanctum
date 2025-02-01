@@ -2,7 +2,12 @@
 
 use std::{sync::atomic::{AtomicBool, Ordering}, thread::sleep, time::Duration};
 
-use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::ERROR_SUCCESS, System::Services::{RegisterServiceCtrlHandlerW, SetServiceStatus, StartServiceCtrlDispatcherW, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS}}};
+use logging::event_log;
+use registry::create_event_source_key;
+use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::ERROR_SUCCESS, System::{EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, Services::{RegisterServiceCtrlHandlerW, SetServiceStatus, StartServiceCtrlDispatcherW, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS}, Threading::{CreateProcessW, InitializeProcThreadAttributeList, UpdateProcThreadAttribute, CREATE_PROTECTED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL, STARTUPINFOEXW}, WindowsProgramming::PROTECTION_LEVEL_SAME}}};
+
+mod logging;
+mod registry;
 
 static SERVICE_STOP: AtomicBool = AtomicBool::new(false);
 
@@ -32,24 +37,100 @@ fn run_service(h_status: SERVICE_STATUS_HANDLE) {
     unsafe {
         update_service_status(h_status, SERVICE_RUNNING.0);
 
-        // Main loop
+        //
+        // Ensure we have a registry key so we can write to the Windows Event Log
+        //
+        let _ = create_event_source_key();
+
+        event_log("Starting SanctumPPLRunner service.", EVENTLOG_INFORMATION_TYPE);
+
+        // spawn child PPL
+        spawn_child_ppl_process();
+
+        // event loop
         while !SERVICE_STOP.load(Ordering::SeqCst) {
-            sleep(Duration::from_secs(1)); // Simulated workload
+            sleep(Duration::from_secs(1));
         }
 
-        // Cleanup and notify SCM of service stop
         update_service_status(h_status, SERVICE_STOPPED.0);
     }
 }
 
+/// Spawns a child process as Protected Process Light.
+/// 
+/// **Tote** The child process MUST be signed with the ELAM certificate, and any DLLs it relies upon must either 
+/// be signed correctly by Microsoft including the pagehashes in the signature, or signed by the ELAM certificate used
+/// to sign this, and the child process.
+fn spawn_child_ppl_process() {
+    let mut startup_info = STARTUPINFOEXW::default();
+        startup_info.StartupInfo.cb = size_of::<STARTUPINFOEXW>() as u32;
+        let mut attribute_size_list: usize = 0;
 
-fn svc_name() -> Vec<u16> {
-    let mut svc_name: Vec<u16> = vec![];
-    "sanctum_ppl_runner".encode_utf16().for_each(|c| svc_name.push(c));
-    svc_name.push(0);
-    
-    svc_name
+        let _ = unsafe { InitializeProcThreadAttributeList(
+            None,
+            1, 
+            None,
+            &mut attribute_size_list) };
+
+        if attribute_size_list == 0 {
+            event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE);
+            std::process::exit(1);
+        }
+
+        let mut attribute_list_mem = vec![0u8; attribute_size_list];
+        startup_info.lpAttributeList = LPPROC_THREAD_ATTRIBUTE_LIST(attribute_list_mem.as_mut_ptr() as *mut _);
+
+        if let Err(_) = unsafe { InitializeProcThreadAttributeList(
+            Some(startup_info.lpAttributeList),
+            1,
+            None,
+            &mut attribute_size_list) } {
+                event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE);
+                std::process::exit(1);
+        }
+
+        // update protection level to be the same as the PPL service
+        let mut protection_level = PROTECTION_LEVEL_SAME;
+        if let Err(e) = unsafe { UpdateProcThreadAttribute(
+            startup_info.lpAttributeList, 
+            0, 
+            PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL as _,
+            Some(&mut protection_level as *mut _ as *mut _),
+            size_of_val(&protection_level), 
+            None, 
+            None,
+        ) } {
+            event_log(&format!("Error UpdateProcThreadAttribute, {}", e), EVENTLOG_ERROR_TYPE);
+            std::process::exit(1);
+        }
+
+        // start the process
+        let mut process_info = PROCESS_INFORMATION::default();
+        // todo update this
+        let path: Vec<u16> = r"C:\Users\flux\AppData\Roaming\Sanctum\etw_consumer.exe"
+            .encode_utf16()
+            .chain(std::iter::once(0))
+            .collect();
+
+        if let Err(e) = unsafe { CreateProcessW(
+            PCWSTR(path.as_ptr()), 
+            None,
+            None, 
+            None, 
+            false, 
+            EXTENDED_STARTUPINFO_PRESENT | CREATE_PROTECTED_PROCESS,
+            None, 
+            PCWSTR::null(), 
+            &mut startup_info as *mut _ as *const _,
+            &mut process_info,
+        ) } {
+            event_log(&format!("Error calling starting child PPL process via CreateProcessW, {}", e), EVENTLOG_ERROR_TYPE);
+            std::process::exit(1);
+        }
+
+        event_log("SanctumPPLRunner started child process.", EVENTLOG_SUCCESS);
 }
+
 
 /// Handles service control events (e.g., stop)
 unsafe extern "system" fn service_handler(control: u32) {
@@ -73,13 +154,13 @@ unsafe fn update_service_status(h_status: SERVICE_STATUS_HANDLE, state: u32) {
         dwWaitHint: 0,
     };
 
-    unsafe {SetServiceStatus(h_status, &mut service_status)};
+    unsafe {let _ = SetServiceStatus(h_status, &mut service_status); }
 }
 
 fn main() {
     let mut service_name: Vec<u16> = "SanctumPPLRunner\0".encode_utf16().collect();
     
-    let mut service_table = [
+    let service_table = [
         SERVICE_TABLE_ENTRYW {
             lpServiceName: PWSTR(service_name.as_mut_ptr()),
             lpServiceProc: Some(ServiceMain),
@@ -90,4 +171,12 @@ fn main() {
     unsafe {
         StartServiceCtrlDispatcherW(service_table.as_ptr()).unwrap();
     }
+}
+
+fn svc_name() -> Vec<u16> {
+    let mut svc_name: Vec<u16> = vec![];
+    "sanctum_ppl_runner".encode_utf16().for_each(|c| svc_name.push(c));
+    svc_name.push(0);
+    
+    svc_name
 }

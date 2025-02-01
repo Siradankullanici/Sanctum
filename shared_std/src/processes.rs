@@ -66,7 +66,7 @@ impl HasPid for OpenProcessData {
     }
 }
 
-/// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemorry
+/// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemory
 /// is called by a process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VirtualAllocExData {
