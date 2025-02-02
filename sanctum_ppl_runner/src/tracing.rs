@@ -3,7 +3,7 @@
 use std::{ptr::copy_nonoverlapping, u64};
 
 use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::{GetLastError, ERROR_SUCCESS, MAX_PATH}, System::{Diagnostics::Etw::{CloseTrace, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, StopTraceW, CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_HEADER, EVENT_RECORD, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_VERBOSE}, EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, ProcessStatus::GetProcessImageFileNameW, Threading::{OpenProcess, PROCESS_ALL_ACCESS}}}};
-use crate::logging::event_log;
+use crate::logging::{event_log, EventID};
 
 //
 // Define constants which are used by this module.
@@ -79,7 +79,7 @@ pub fn start_threat_intel_trace() {
 /// 
 /// This will register the tracing session and then start it **blocking** the thread until an error occurs from the winternal functions.
 fn register_ti_session() {
-    event_log("Starting ETW:TI registration.", EVENTLOG_INFORMATION_TYPE);
+    event_log("Starting ETW:TI registration.", EVENTLOG_INFORMATION_TYPE, EventID::Info);
 
     let mut handle = CONTROLTRACE_HANDLE::default();
 
@@ -95,7 +95,7 @@ fn register_ti_session() {
     let properties = buffer.as_mut_ptr() as *mut EVENT_TRACE_PROPERTIES;
 
     if properties.is_null() {
-        event_log("Buffer was null for EVENT_TRACE_PROPERTIES. Cannot proceed safely.", EVENTLOG_ERROR_TYPE);
+        event_log("Buffer was null for EVENT_TRACE_PROPERTIES. Cannot proceed safely.", EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
@@ -124,11 +124,11 @@ fn register_ti_session() {
         properties)
     };
     if status.is_err() {
-        event_log(&format!("Unable to register ETW:TI session. Failed with Win32 error: {:?}", status), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Unable to register ETW:TI session. Failed with Win32 error: {:?}", status), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
-    event_log("Successfully registered ETW trace.", EVENTLOG_INFORMATION_TYPE);
+    event_log("Successfully registered ETW trace.", EVENTLOG_INFORMATION_TYPE, EventID::Info);
 
     let status = unsafe { 
         EnableTraceEx2(
@@ -143,12 +143,12 @@ fn register_ti_session() {
         )
     }; 
     if status.is_err() {
-        event_log(&format!("EnableTraceEx2 failed with Win32 error: {:?}", status), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("EnableTraceEx2 failed with Win32 error: {:?}", status), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         stop_trace(handle, session_name, properties);
         std::process::exit(1);
     }
 
-    event_log("Successfully started trace for ETW:TI.", EVENTLOG_INFORMATION_TYPE);
+    event_log("Successfully started trace for ETW:TI.", EVENTLOG_INFORMATION_TYPE, EventID::Info);
 
     process_trace_events(&mut wide_name);
     
@@ -162,9 +162,9 @@ fn register_ti_session() {
 
 /// Stops the tracing session
 fn stop_trace(handle: CONTROLTRACE_HANDLE, session_name: PCWSTR, properties: *mut EVENT_TRACE_PROPERTIES) {
-    event_log("Stopping trace...", EVENTLOG_INFORMATION_TYPE);
+    event_log("Stopping trace...", EVENTLOG_INFORMATION_TYPE, EventID::GeneralError);
     if unsafe { StopTraceW(handle, session_name, properties)}.is_err() {
-        event_log(&format!("Failed to stop ETW:TI session. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Failed to stop ETW:TI session. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
     }
 }
 
@@ -177,7 +177,7 @@ fn process_trace_events(session_name: &mut Vec<u16>) {
 
     let trace_handle = unsafe { OpenTraceW(&mut log_file) };
     if trace_handle.Value == u64::MAX {
-        event_log(&format!("Failed to open trace. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Failed to open trace. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
@@ -187,7 +187,7 @@ fn process_trace_events(session_name: &mut Vec<u16>) {
     //
     let status = unsafe { ProcessTrace(&[trace_handle], None, None) };
     if status != ERROR_SUCCESS {
-        event_log(&format!("Failed to run ProcessTrace. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Failed to run ProcessTrace. Failed with Win32 error: {}", unsafe {GetLastError().0}), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         let _ = unsafe { CloseTrace(trace_handle) };
         std::process::exit(1);
     }
@@ -196,7 +196,7 @@ fn process_trace_events(session_name: &mut Vec<u16>) {
 /// A callback routine that handles trace events, allowing them to be processed as required
 unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
     if record.is_null() {
-        event_log("Event was a null pointer in the tracer callback routine.", EVENTLOG_ERROR_TYPE);
+        event_log("Event was a null pointer in the tracer callback routine.", EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         return;
     }
 
@@ -217,7 +217,11 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
     };
 
     if process_image.to_ascii_lowercase().contains("malware") || process_image.to_ascii_lowercase().contains("notepad") {
-        event_log(&format!("Callback received from pid: {}, image: {}. Data: {:?}", pid, process_image, event_header.EventDescriptor), EVENTLOG_SUCCESS);
+
+        if keyword & KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE == KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE {
+            event_log(&format!("Remote memory allocation caught for pid: {}, image: {}. Data: {:?}", pid, process_image, event_header.EventDescriptor), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+        }
+
     }
 
 }
@@ -231,7 +235,7 @@ fn get_process_image_from_pid(pid: u32, event_header: &EVENT_HEADER) -> Result<S
     let process_handle = match unsafe { OpenProcess(PROCESS_ALL_ACCESS, false, pid) } {
         Ok(h) => h,
         Err(e) => {
-            event_log(&format!("Failed to open process for pid: {pid} from event information: {:?}. Error: {e}", event_header.EventDescriptor), EVENTLOG_ERROR_TYPE);
+            event_log(&format!("Failed to open process for pid: {pid} from event information: {:?}. Error: {e}", event_header.EventDescriptor), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
             return Err(());
         },
     };
@@ -243,7 +247,9 @@ fn get_process_image_from_pid(pid: u32, event_header: &EVENT_HEADER) -> Result<S
             "Failed to get process image for pid: {pid} from event information: {:?}. Win32 Error: {}", 
                 event_header.EventDescriptor, 
                 unsafe { GetLastError().0} ), 
-            EVENTLOG_ERROR_TYPE);
+            EVENTLOG_ERROR_TYPE,
+            EventID::GeneralError
+        );
         return Err(());
     }
 
@@ -258,7 +264,9 @@ fn get_process_image_from_pid(pid: u32, event_header: &EVENT_HEADER) -> Result<S
                 "Failed to convert image name to string for process: {pid} from event information: {:?}. Error: {e}", 
                     event_header.EventDescriptor
                 ),
-                EVENTLOG_ERROR_TYPE);
+                EVENTLOG_ERROR_TYPE,
+                EventID::GeneralError
+            );
             return Err(());
         },
     };
