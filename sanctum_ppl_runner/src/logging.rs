@@ -3,6 +3,21 @@
 
 use windows::{core::PCWSTR, Win32::{Foundation::CloseHandle, System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, REPORT_EVENT_TYPE}}};
 
+/// A C style enum, event identifiers used in the Event Log to help filter / correlate by dictionary
+#[repr(u32)]
+pub enum EventID {
+    /// General informational logs related to the normal function of the service
+    Info = 1,
+    /// When the service encounters an error in functions related to the running of the service
+    GeneralError = 2,
+    /// A process of interest has completed an action caught by the ETW:TI consumer which is of 
+    /// security interest.
+    TIGeneralNotification = 3,
+    /// A process of interest has completed an action caught by the ETW:TI consumer which is of 
+    /// security interest.
+    ProcessOfInterestTI = 4,
+}
+
 /// Logs an event to the Windows Event Log for the `SanctumPPLRunner` log directory.
 /// 
 /// # Args
@@ -13,7 +28,7 @@ use windows::{core::PCWSTR, Win32::{Foundation::CloseHandle, System::EventLog::{
 /// If this function encounters an error, it will return with taking no action and thus, could silently 
 /// fail. There is no real abstraction to be had to returning an error from the function; it will either 
 /// work or it wont, it will not affect the caller.
-pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE) {
+pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE, event_id: EventID) {
     // todo consider adding an enum which will exit on error or just return.
     let source: Vec<u16> = "SanctumPPLRunner\0".encode_utf16().collect();
 
@@ -31,7 +46,7 @@ pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE) {
             handle, 
             event_type, 
             0,
-            1, // todo change for prod https://learn.microsoft.com/en-us/windows/win32/eventlog/event-identifiers
+            event_id as u32, // https://learn.microsoft.com/en-us/windows/win32/eventlog/event-identifiers
             None, 
             0,
             Some([msg_as_pcwstr].as_ref()),

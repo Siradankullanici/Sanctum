@@ -2,7 +2,7 @@
 
 use std::{sync::atomic::{AtomicBool, Ordering}, thread::sleep, time::Duration};
 
-use logging::event_log;
+use logging::{event_log, EventID};
 use registry::create_event_source_key;
 use tracing::start_threat_intel_trace;
 use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::ERROR_SUCCESS, System::{EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, Services::{RegisterServiceCtrlHandlerW, SetServiceStatus, StartServiceCtrlDispatcherW, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS}, Threading::{CreateProcessW, InitializeProcThreadAttributeList, UpdateProcThreadAttribute, CREATE_PROTECTED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL, STARTUPINFOEXW}, WindowsProgramming::PROTECTION_LEVEL_SAME}}};
@@ -44,10 +44,12 @@ fn run_service(h_status: SERVICE_STATUS_HANDLE) {
         //
         let _ = create_event_source_key();
 
-        event_log("Starting SanctumPPLRunner service.", EVENTLOG_INFORMATION_TYPE);
+        event_log("Starting SanctumPPLRunner service.", EVENTLOG_INFORMATION_TYPE, EventID::Info);
 
-        // start tracing session
-        start_threat_intel_trace();
+        // start tracing session; we spawn this in its own os thread as it is blocking
+        std::thread::spawn(|| { 
+            start_threat_intel_trace();
+        });
 
         // spawn child PPL
         spawn_child_ppl_process();
@@ -78,7 +80,7 @@ fn spawn_child_ppl_process() {
         &mut attribute_size_list) };
 
     if attribute_size_list == 0 {
-        event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE);
+        event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
@@ -90,7 +92,7 @@ fn spawn_child_ppl_process() {
         1,
         None,
         &mut attribute_size_list) } {
-            event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE);
+            event_log("Error initialising thread attribute list", EVENTLOG_ERROR_TYPE, EventID::GeneralError);
             std::process::exit(1);
     }
 
@@ -105,7 +107,7 @@ fn spawn_child_ppl_process() {
         None, 
         None,
     ) } {
-        event_log(&format!("Error UpdateProcThreadAttribute, {}", e), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Error UpdateProcThreadAttribute, {}", e), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
@@ -129,11 +131,11 @@ fn spawn_child_ppl_process() {
         &mut startup_info as *mut _ as *const _,
         &mut process_info,
     ) } {
-        event_log(&format!("Error calling starting child PPL process via CreateProcessW, {}", e), EVENTLOG_ERROR_TYPE);
+        event_log(&format!("Error calling starting child PPL process via CreateProcessW, {}", e), EVENTLOG_ERROR_TYPE, EventID::GeneralError);
         std::process::exit(1);
     }
 
-    event_log("SanctumPPLRunner started child process.", EVENTLOG_SUCCESS);
+    event_log("SanctumPPLRunner started child process.", EVENTLOG_SUCCESS, EventID::Info);
 }
 
 
