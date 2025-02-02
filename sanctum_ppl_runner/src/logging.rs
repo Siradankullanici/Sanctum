@@ -1,7 +1,7 @@
 //! A basic event log module to log any errors / events in the Windows Event Log making debugging
 //! easier.
 
-use windows::{core::PCWSTR, Win32::System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, REPORT_EVENT_TYPE}};
+use windows::{core::PCWSTR, Win32::{Foundation::CloseHandle, System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, REPORT_EVENT_TYPE}}};
 
 /// Logs an event to the Windows Event Log for the `SanctumPPLRunner` log directory.
 /// 
@@ -40,5 +40,7 @@ pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE) {
     };
 
     let _ = unsafe { DeregisterEventSource(handle) };
+
+    let _ = unsafe { CloseHandle(handle) };
     
 }

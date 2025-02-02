@@ -4,10 +4,12 @@ use std::{sync::atomic::{AtomicBool, Ordering}, thread::sleep, time::Duration};
 
 use logging::event_log;
 use registry::create_event_source_key;
+use tracing::start_threat_intel_trace;
 use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::ERROR_SUCCESS, System::{EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, Services::{RegisterServiceCtrlHandlerW, SetServiceStatus, StartServiceCtrlDispatcherW, SERVICE_RUNNING, SERVICE_START_PENDING, SERVICE_STATUS, SERVICE_STATUS_CURRENT_STATE, SERVICE_STATUS_HANDLE, SERVICE_STOPPED, SERVICE_TABLE_ENTRYW, SERVICE_WIN32_OWN_PROCESS}, Threading::{CreateProcessW, InitializeProcThreadAttributeList, UpdateProcThreadAttribute, CREATE_PROTECTED_PROCESS, EXTENDED_STARTUPINFO_PRESENT, LPPROC_THREAD_ATTRIBUTE_LIST, PROCESS_INFORMATION, PROC_THREAD_ATTRIBUTE_PROTECTION_LEVEL, STARTUPINFOEXW}, WindowsProgramming::PROTECTION_LEVEL_SAME}}};
 
 mod logging;
 mod registry;
+mod tracing;
 
 static SERVICE_STOP: AtomicBool = AtomicBool::new(false);
 
@@ -43,6 +45,9 @@ fn run_service(h_status: SERVICE_STATUS_HANDLE) {
         let _ = create_event_source_key();
 
         event_log("Starting SanctumPPLRunner service.", EVENTLOG_INFORMATION_TYPE);
+
+        // start tracing session
+        start_threat_intel_trace();
 
         // spawn child PPL
         spawn_child_ppl_process();
