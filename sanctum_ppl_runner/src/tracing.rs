@@ -105,7 +105,6 @@ fn register_ti_session() {
         (*properties).Wnode.BufferSize = total_size as _;
         (*properties).Wnode.Flags = EVENT_TRACE_REAL_TIME_MODE;
         (*properties).LogFileMode = EVENT_TRACE_REAL_TIME_MODE;
-        // (*properties).LogFileNameOffset = 0;
         // set logger name offset to the right of the structure
         (*properties).LoggerNameOffset = size_of::<EVENT_TRACE_PROPERTIES>() as _;
     }
