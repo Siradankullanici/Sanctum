@@ -83,7 +83,7 @@ fn register_ti_session() {
 
     let mut handle = CONTROLTRACE_HANDLE::default();
 
-    let mut wide_name: Vec<u16> = "MyThreatIntelSession\0".encode_utf16().collect();
+    let mut wide_name: Vec<u16> = "SanctumETWThreatIntelligence\0".encode_utf16().collect();
     let session_name = PCWSTR::from_raw(wide_name.as_ptr());
 
     // SAFETY: null pointer for getting the session name length checked above.
