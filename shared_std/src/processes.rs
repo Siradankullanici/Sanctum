@@ -42,7 +42,7 @@ pub struct SyscallData<T: HasPid> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Syscall {
     OpenProcess(SyscallData<OpenProcessData>),
-    VirtualAllocEx(SyscallData<VirtualAllocExData>)
+    VirtualAllocEx(SyscallData<VirtualAllocExSyscall>)
 }
 
 impl Syscall {
@@ -69,7 +69,7 @@ impl HasPid for OpenProcessData {
 /// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemory
 /// is called by a process.
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAllocExData {
+pub struct VirtualAllocExSyscall {
     /// The base address is the base of the remote process which is stored as a usize but is actually a hex
     /// address and will need converting if using as an address.
     pub base_address: usize,
@@ -86,7 +86,7 @@ pub struct VirtualAllocExData {
     pub pid: u32,
 }
 
-impl HasPid for VirtualAllocExData {
+impl HasPid for VirtualAllocExSyscall {
     fn get_pid(&self) -> u32 {
         self.pid
     }
@@ -104,4 +104,36 @@ pub enum SyscallType {
 pub enum ApiOrigin {
     Kernel,
     SyscallHook,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EtwData<T: HasPid> {
+    pub inner: T,
+}
+
+/// Wrap an ETW event with an enum so that we can send messages between the process we have hooked and our EDR engine.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum EtwMessage {
+    VirtualAllocEx(EtwData<VirtualAllocExEtw>)
+}
+
+impl EtwMessage {
+    pub fn get_pid(&self) -> u32 {
+        match self {
+            EtwMessage::VirtualAllocEx(etw_data) => etw_data.inner.pid,
+        }
+    }
+}
+
+/// ETW Telemetry for a process calling VirtualAllocEx
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct VirtualAllocExEtw {
+    /// The pid of the process calling VirtualAllocEx
+    pub pid: u32,
+}
+
+impl HasPid for VirtualAllocExEtw {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
 }

@@ -2,8 +2,9 @@
 
 use std::{ptr::copy_nonoverlapping, u64};
 
+use shared_std::processes::{EtwData, EtwMessage, VirtualAllocExEtw};
 use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::{GetLastError, ERROR_SUCCESS, MAX_PATH}, System::{Diagnostics::Etw::{CloseTrace, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, StopTraceW, CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_HEADER, EVENT_RECORD, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_VERBOSE}, EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, ProcessStatus::GetProcessImageFileNameW, Threading::{OpenProcess, PROCESS_ALL_ACCESS}}}};
-use crate::logging::{event_log, EventID};
+use crate::{ipc::send_etw_info_ipc, logging::{event_log, EventID}};
 
 //
 // Define constants which are used by this module.
@@ -219,6 +220,11 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
 
         if keyword & KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE == KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE {
             event_log(&format!("Remote memory allocation caught for pid: {}, image: {}. Data: {:?}", pid, process_image, event_header.EventDescriptor), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+            send_etw_info_ipc(&EtwMessage::VirtualAllocEx(EtwData {
+                inner: VirtualAllocExEtw {
+                    pid,
+                },
+            }));
         }
 
     }
