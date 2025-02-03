@@ -10,6 +10,7 @@ use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::ERROR_SUCCESS, System::
 mod logging;
 mod registry;
 mod tracing;
+mod ipc;
 
 static SERVICE_STOP: AtomicBool = AtomicBool::new(false);
 

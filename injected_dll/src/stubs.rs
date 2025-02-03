@@ -1,7 +1,7 @@
 //! Stubs that act as callback functions from syscalls.
 
 use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExData};
+use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall};
 use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
 use crate::ipc::send_syscall_info_ipc;
 
@@ -80,7 +80,7 @@ unsafe extern "system" fn virtual_alloc_ex(
     
         send_syscall_info_ipc(&Syscall::VirtualAllocEx(
             SyscallData { 
-                inner: VirtualAllocExData {
+                inner: VirtualAllocExSyscall {
                     base_address: base_address as usize,
                     region_size: region_size_checked,
                     allocation_type,

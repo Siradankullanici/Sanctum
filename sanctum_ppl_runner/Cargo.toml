@@ -22,3 +22,5 @@ windows = {version = "0.59.0", features = [
     "Win32_System_Time",
     "Win32_System_ProcessStatus",
 ]}
+serde_json = { version = "1.0.133", default-features = false, features = ["alloc"] }
+shared_std ={ path = "../shared_std"}

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, Syscall, SyscallType, VirtualAllocExData};
+use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, Syscall, SyscallType, VirtualAllocExSyscall};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -353,7 +353,7 @@ impl ProcessMonitor {
     }
 
     /// Handle a VirtualAllocEx signal being received from a remote process.
-    pub fn ghost_hunt_virtual_alloc_ex_add(&mut self, signal: VirtualAllocExData, syscall_origin: ApiOrigin) {
+    pub fn ghost_hunt_virtual_alloc_ex_add(&mut self, signal: VirtualAllocExSyscall, syscall_origin: ApiOrigin) {
         let log = Log::new();
 
         // select the process
