@@ -5,7 +5,7 @@ use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
-use super::{injected_dll_ipc::run_ipc_for_injected_dll, process_monitor::{snapshot_all_processes, ProcessMonitor}};
+use super::{ipc_etw_consumer::run_ipc_for_etw, ipc_injected_dll::run_ipc_for_injected_dll, process_monitor::{snapshot_all_processes, ProcessMonitor}};
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates
 /// with the kernel.
@@ -56,10 +56,16 @@ impl Core {
         self.process_monitor.write().await.extend_processes(snapshot_processes);
 
         let (tx, mut rx) = mpsc::channel(1000);
+        let (tx_etw, mut rx_etw) = mpsc::channel(1000);
         
         // Start the IPC server for the injected DLL to communicate with the core
         tokio::spawn(async {
             run_ipc_for_injected_dll(tx).await;
+        });
+
+        // Start the IPC server for the ETW consumer
+        tokio::spawn(async {
+            run_ipc_for_etw(tx_etw).await;
         });
 
         

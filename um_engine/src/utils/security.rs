@@ -11,7 +11,7 @@ use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllow
 /// # Note
 /// A number of heap allocated structures will be leaked via `Box::leak()` - this is okay and not considered a memory leak as
 /// this will be called once during the creation of the named pipe and then are required for the duration of the process.
-pub fn create_security_attributes() -> *mut SECURITY_ATTRIBUTES {
+pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
     unsafe {
         //
         // Allocate the SECURITY_DESCRIPTOR on the heap and initialise
@@ -85,19 +85,21 @@ pub fn create_security_attributes() -> *mut SECURITY_ATTRIBUTES {
         //
         // Allocate SECURITY_ATTRIBUTES on the heap and fill it
         //
-        let mut sa_box = Box::new(SECURITY_ATTRIBUTES {
+        let mut sa_box = SECURITY_ATTRIBUTES {
             nLength: mem::size_of::<SECURITY_ATTRIBUTES>() as u32,
             lpSecurityDescriptor: &mut *sd_box as *mut _ as *mut core::ffi::c_void,
             bInheritHandle: FALSE,
-        });
+        };
 
 
         // 
         // Leak everything so that we can ensure their lifetime is valid for the duration of the 
         // entire program. The memory will be cleaned up when the process exits.
         //
-        Box::leak(sd_box);
-        Box::leak(Box::new(acl_buf));
-        Box::leak(sa_box)
+        // Box::leak(sd_box);
+        // Box::leak(Box::new(acl_buf));
+        // Box::leak(sa_box)
+
+        sa_box
     }
 }

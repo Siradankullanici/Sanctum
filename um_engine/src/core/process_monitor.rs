@@ -9,7 +9,7 @@ use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 // Allow an impl block in this module, as opposed to implementing it outside of here; seeing as the impl is likely not required outside the 
 // engine. If it needs to be, then the impl will be moved to the shared crate.
 pub trait ProcessImpl {
-    fn update_process_risk_score(&mut self, score: i16);
+    fn update_process_risk_score(&mut self, score: SyscallType);
     fn add_ghost_hunt_timer(&mut self, syscall_origin: ApiOrigin, syscall_type: SyscallType);
 }
 
@@ -328,9 +328,9 @@ impl ProcessMonitor {
                 for item in &process.clone().ghost_hunting_timers {
                     if let Ok(t) = item.timer.elapsed() {
                         if t > MAX_WAIT {
-                            process.update_process_risk_score(SyscallType::OpenProcess as i16);
+                            process.update_process_risk_score(item.syscall_type.clone());
                             process.ghost_hunting_timers.remove(index);
-                            println!("******* RISK SCORE RAISED AS TIMER EXCEEDED");
+                            println!("******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}", item.syscall_type);
                             break;
                         }
                     }
@@ -374,9 +374,9 @@ impl ProcessMonitor {
 impl ProcessImpl for Process {
     /// Updates the risk score for a given process. The input score argument may be positive or negative
     /// within the bounds of the type; this will alter the score accordingly
-    fn update_process_risk_score(&mut self, score: i16) {
+    fn update_process_risk_score(&mut self, score: SyscallType) {
 
-        if self.risk_score.checked_add_signed(score).is_none() {
+        if self.risk_score.checked_add_signed(score as i16).is_none() {
             // If we overflowed the unsigned int / went below zero, just assign a score of 0
             // todo this could possibly be abused by an adversary brute forcing a 0 score?
             self.risk_score = 0;

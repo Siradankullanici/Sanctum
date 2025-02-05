@@ -26,7 +26,7 @@ unsafe extern "system" fn open_process(
         });
 
         // send the telemetry to the engine
-        send_syscall_info_ipc(&data);
+        send_syscall_info_ipc(data);
     }
     
     // todo automate the syscall number so not hardcoded
@@ -78,7 +78,7 @@ unsafe extern "system" fn virtual_alloc_ex(
             unsafe { *region_size }
         };
     
-        send_syscall_info_ipc(&Syscall::VirtualAllocEx(
+        send_syscall_info_ipc(Syscall::VirtualAllocEx(
             SyscallData { 
                 inner: VirtualAllocExSyscall {
                     base_address: base_address as usize,

@@ -1,30 +1,24 @@
-//! The Sanctum EDR DLL which is injected into processes needs a way to communicate
-//! with the engine, and this module provides the functionality for this.
+//! Consume IPC messages from the Events Tracing for Windows consumer.
 
-use std::{ffi::c_void, os::windows::io::{AsHandle, AsRawHandle}, ptr::null_mut, sync::{atomic::AtomicPtr, Arc}};
+use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
+use shared_std::{constants::PIPE_FOR_ETW, processes::EtwMessage};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
-
 use crate::utils::{log::{Log, LogLevel}, security::create_security_attributes};
 
-
-static SECURITY_PTR: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
-
-/// Starts the IPC server for the DLL injected into processes to communicate with
-pub async fn run_ipc_for_injected_dll(
-    tx: Sender<Syscall>
+/// Starts the IPC server for the ETW running from PPL
+pub async fn run_ipc_for_etw(
+    tx: Sender<EtwMessage>
 ) {
     // Store the pointer in the atomic so we can safely access it across 
-    let sa_ptr = create_security_attributes() as *mut c_void;
-    SECURITY_PTR.store(sa_ptr, std::sync::atomic::Ordering::SeqCst);
+    let mut sec_attr = create_security_attributes();
 
     // SAFETY: Null pointer checked at start of function
     let mut server = unsafe {ServerOptions::new()
         .first_pipe_instance(true)
-        .create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, sa_ptr)
-        .expect("[-] Unable to create named pipe server for injected DLL")};
+        .create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _)
+        .expect("[-] Unable to create named pipe server for ETW receiver")};
 
     let tx_arc = Arc::new(tx);
     
@@ -33,19 +27,14 @@ pub async fn run_ipc_for_injected_dll(
         loop {
             let logger = Log::new();
             // wait for a connection 
-            logger.log(LogLevel::Info, "Waiting for IPC message from DLL");
-            server.connect().await.expect("Could not get a client connection for injected DLL ipc");
+            server.connect().await.expect("Could not get a client connection for ETW ipc");
             let mut connected_client = server;
+
+            let mut sec_attr = create_security_attributes();
             
-            // Construct the next server before sending the one we have onto a task, which ensures
-            // the server isn't closed
-            let sec_ptr = SECURITY_PTR.load(std::sync::atomic::Ordering::SeqCst);
-            if sec_ptr.is_null() {
-                logger.panic("Security pointer was null for IPC server.");
-            }
             // SAFETY: null pointer checked above
-            server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, sec_ptr).expect("Unable to create new version of IPC for injected DLL") };
-            let tx_cl: Arc<Sender<Syscall>> = Arc::clone(&tx_arc);
+            server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for ETW pipe listener") };
+            let tx_cl: Arc<Sender<EtwMessage>> = Arc::clone(&tx_arc);
             
             //
             // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
@@ -62,8 +51,9 @@ pub async fn run_ipc_for_injected_dll(
                         }
 
                         // deserialise the request
-                        match from_slice::<Syscall>(&buffer[..bytes_read]) {
-                            Ok(syscall) => {
+                        match from_slice::<EtwMessage>(&buffer[..bytes_read]) {
+                            Ok(etw_msg) => {
+                                println!("ETW MSG: {:?}", etw_msg);
 
                                 // 
                                 // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
@@ -82,14 +72,14 @@ pub async fn run_ipc_for_injected_dll(
                                         todo!()
                                     },
                                 };
-                                if pipe_pid != syscall.get_pid() {
+                                if pipe_pid != etw_msg.get_pid() {
                                     // todo this is bad and should do something
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
 
-                                logger.log(LogLevel::Success, &format!("Data from injected DLL pipe: {:?}.", syscall));
-                                if let Err(e) = tx_cl.send(syscall).await {
-                                    logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
+                                logger.log(LogLevel::Success, &format!("Data from ETW pipe: {:?}.", etw_msg));
+                                if let Err(e) = tx_cl.send(etw_msg).await {
+                                    logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from ETW. {e}"));
                                 }
                             },
                             Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}")),

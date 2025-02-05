@@ -1,3 +1,4 @@
 pub mod core;
 mod process_monitor;
-pub mod injected_dll_ipc;
+mod ipc_injected_dll;
+mod ipc_etw_consumer;

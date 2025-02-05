@@ -4,7 +4,7 @@ use serde_json::to_vec;
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
-pub fn send_syscall_info_ipc(data: &Syscall) {
+pub fn send_syscall_info_ipc(data: Syscall) {
     // send information to the engine via IPC; do not use Tokio as we don't want the async runtime in our processes..
     // and it would not be FFI safe, so we will use the standard library to achieve this
     let mut client = loop {

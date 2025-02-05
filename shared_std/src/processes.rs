@@ -30,6 +30,7 @@ pub trait HasPid {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(transparent)]
 pub struct SyscallData<T: HasPid> {
     pub inner: T,
 }

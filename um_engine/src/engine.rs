@@ -3,7 +3,7 @@ use std::sync::Arc;
 use shared_std::settings::SanctumSettings;
 use tokio::sync::Mutex;
 
-use crate::{core::{core::Core, injected_dll_ipc::run_ipc_for_injected_dll}, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, settings::SanctumSettingsImpl, utils::log::Log};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, settings::SanctumSettingsImpl, utils::log::Log};
 
 /// Engine is the central driver and control point for the Sanctum EDR. It is responsible for
 /// managing the core features of the EDR, including:
