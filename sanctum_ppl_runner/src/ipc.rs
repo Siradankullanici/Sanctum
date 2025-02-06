@@ -3,7 +3,7 @@
 use std::{fs::OpenOptions, io::Write, thread::sleep, time::Duration};
 
 use serde_json::to_vec;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::EtwMessage};
+use shared_std::{constants::{PIPE_FOR_ETW, PIPE_FOR_INJECTED_DLL}, processes::EtwMessage};
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
 /// Sends an ETW event to the usermode engine for processing. To ensure we correctly implement the get_pid trait,
@@ -25,7 +25,7 @@ pub fn send_etw_info_ipc(data: &EtwMessage) {
     // send information to the engine via IPC; do not use Tokio as we don't want the async runtime in our processes..
     // and it would not be FFI safe, so we will use the standard library to achieve this
     let mut client = loop {
-        match OpenOptions::new().read(true).write(true).open(PIPE_FOR_INJECTED_DLL) {
+        match OpenOptions::new().read(true).write(true).open(PIPE_FOR_ETW) {
             Ok(client) => break client,
             // If the pipe is busy, try again after a wait
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as _) => (),

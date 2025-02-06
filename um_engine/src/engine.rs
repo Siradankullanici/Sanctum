@@ -1,9 +1,13 @@
-use std::sync::Arc;
+use std::{ffi::CStr, sync::Arc};
 
 use shared_std::settings::SanctumSettings;
 use tokio::sync::Mutex;
+use windows::Win32::{Foundation::GetLastError, System::Diagnostics::ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}};
 
-use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, settings::SanctumSettingsImpl, utils::log::Log};
+use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner::FileScanner, gui_communication::ipc::UmIpc, settings::SanctumSettingsImpl, utils::log::{Log, LogLevel}};
+
+/// The Process ID of the Sanctum PPL service.
+pub static mut PPL_SERVICE_PID: u32 = 0;
 
 /// Engine is the central driver and control point for the Sanctum EDR. It is responsible for
 /// managing the core features of the EDR, including:
@@ -15,11 +19,30 @@ use crate::{core::core::Core, driver_manager::SanctumDriverManager, filescanner:
 /// - Process monitoring
 /// - File monitoring
 /// - Driver management
-pub struct Engine {}
+pub struct Engine;
 
 impl Engine {
     /// Start the engine
     pub async fn start() -> Result<(), Box<dyn std::error::Error>> {
+
+        // Get the PID of the PPL Service that should be running; if it is not running panic. This service is essential to
+        // the EDR. The service is not stoppable so its PID is valid for the duration of the lifetime of the engine.
+        // SAFETY: Assigning to the static is safe from the above rationale. This will be the only assignment made to the static,
+        // the program should never reassign the pid of the static other than here on initialisation.
+        unsafe {
+            let log = Log::new();
+            PPL_SERVICE_PID = match get_ppl_svc_pid() {
+                Ok(pid) => {
+                    log.log(LogLevel::Success, &format!("Found PID of PPL Service. {pid}"));
+                    pid
+                },
+                Err(_) => {
+                    
+                    log.panic("Sanctum PPL Service not found. Are you sure it was started?");
+                },
+            }
+        };
+
         //
         // Start by instantiating the elements we will be using in the engine.
         // Once created; clone them as Arcs to share across the threads
@@ -83,4 +106,65 @@ impl Engine {
         
         Ok(())
     }
+}
+
+/// Gets the PID of the Protected Process Light service which should be running to catch ETW events.
+/// 
+/// # Returns
+/// - Ok: If the service was found, the PID will be returned
+/// - Err: If the service was not found a unit Error will be returned
+/// 
+/// # PAnics
+/// The function will panic if it encounters an error snapshotting the processes.
+fn get_ppl_svc_pid() -> Result<u32, ()> {
+
+    let logger = Log::new();
+
+    let snapshot = match unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPALL, 0)} {
+        Ok(s) => {
+            if s.is_invalid() {
+                logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
+            } else {
+                s
+            }
+        },
+        Err(_) => {
+            // not really bothered about the error at this stage
+            logger.panic(&format!("Unable to create snapshot of all processes. GLE: {}", unsafe { GetLastError().0 }));
+        },
+    };
+
+    let mut process_entry = PROCESSENTRY32::default();
+    process_entry.dwSize = std::mem::size_of::<PROCESSENTRY32>() as u32;
+
+    if unsafe { Process32First(snapshot,&mut process_entry)}.is_ok() {
+        loop {
+            // 
+            // Get the process name; helpful mostly for debug messages
+            //
+            let current_process_name_ptr = process_entry.szExeFile.as_ptr() as *const _;
+            let current_process_name = match unsafe { CStr::from_ptr(current_process_name_ptr) }.to_str() {
+                Ok(process) => process.to_string(),
+                Err(e) => {
+                    logger.log(LogLevel::Error, &format!("Error converting process name. {e}"));
+                    if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                        break;
+                    }
+                    continue;
+                }
+            };
+
+            // look for our service
+            if current_process_name.contains("sanctum_ppl_runner") {
+                return Ok(process_entry.th32ProcessID)
+            }
+
+            // continue enumerating
+            if !unsafe { Process32Next(snapshot, &mut process_entry) }.is_ok() {
+                break;
+            }
+        }
+    }
+
+    Err(())
 }

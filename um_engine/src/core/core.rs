@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::{ApiOrigin, HasPid, OpenProcessData, Process};
+use shared_std::processes::{ApiOrigin, EtwMessage, HasPid, OpenProcessData, Process};
 use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
@@ -82,7 +82,17 @@ impl Core {
                     },
                     shared_std::processes::Syscall::VirtualAllocEx(virtual_alloc_ex_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_virtual_alloc_ex_add(virtual_alloc_ex_data.inner, ApiOrigin::SyscallHook);
+                        lock.ghost_hunt_virtual_alloc_ex_add_from_dll(virtual_alloc_ex_data.inner);
+                    },
+                }
+            }
+
+            // Check for events from the ETW listener
+            if let Ok(etw_notification) = rx_etw.try_recv() {
+                match etw_notification {
+                    EtwMessage::VirtualAllocEx(etw_data) => {
+                        let mut lock = self.process_monitor.write().await;
+                        lock.ghost_hunt_virtual_alloc_ex_add_from_etw(etw_data.inner);
                     },
                 }
             }

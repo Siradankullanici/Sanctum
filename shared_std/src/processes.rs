@@ -18,16 +18,32 @@ pub struct Process {
     pub ghost_hunting_timers: Vec<GhostHuntingTimers>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GhostHuntingTimers {
     pub timer: SystemTime,
-    pub syscall_type: SyscallType,
+    pub event_type: EventTypeWeighted,
     pub origin: ApiOrigin,
+    /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
+    /// sources of telemetry, we cannot do a 1:1 cancellation process.
+    pub cancellable_by: Vec<ApiOrigin>,
 }
 
 pub trait HasPid {
     fn get_pid(&self) -> u32;
 }
+
+/// Defines whether a syscall type API was caught in the kernel, in a syscall hook, or from ETW
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ApiOrigin {
+    Kernel,
+    SyscallHook,
+    Etw,
+}
+
+
+/*****************************************************************************/
+/***                         EVENTS FROM SYSCALL HOOK                        */
+/*****************************************************************************/
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(transparent)]
@@ -93,19 +109,20 @@ impl HasPid for VirtualAllocExSyscall {
     }
 }
 
+/// Define the different event types that we are monitoring. Each event contains an associated weight 
+/// as to how much this should affect the risk score.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum SyscallType {
+pub enum EventTypeWeighted {
     OpenProcess = 20,
-    VirtualAllocExRWX = 50,
+    VirtualAllocEx = 50,
     CreateRemoteThread = 60,
 }
 
-/// Defines whether a syscall type API was caught in the kernel or in a syscall hook
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ApiOrigin {
-    Kernel,
-    SyscallHook,
-}
+
+/*****************************************************************************/
+/***                                ETW EVENTS                                */
+/*****************************************************************************/
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EtwData<T: HasPid> {

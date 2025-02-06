@@ -5,7 +5,7 @@ use serde_json::from_slice;
 use shared_std::{constants::PIPE_FOR_ETW, processes::EtwMessage};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
-use crate::utils::{log::{Log, LogLevel}, security::create_security_attributes};
+use crate::{engine::PPL_SERVICE_PID, utils::{log::{Log, LogLevel}, security::create_security_attributes}};
 
 /// Starts the IPC server for the ETW running from PPL
 pub async fn run_ipc_for_etw(
@@ -53,17 +53,7 @@ pub async fn run_ipc_for_etw(
                         // deserialise the request
                         match from_slice::<EtwMessage>(&buffer[..bytes_read]) {
                             Ok(etw_msg) => {
-                                println!("ETW MSG: {:?}", etw_msg);
-
-                                // 
-                                // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
-                                // IPC from the malware saying you are performing an operation via a hooked syscall; when in actuality you are
-                                // using direct syscalls to evade detection etc.
-                                //
-                                // Therefore, in order to combat this we can enforce IPC messages to contain the HasPid trait, so that all inbound
-                                // IPC messages contain a pid. We can then compare the pid offered by the message, with the PID the pipe actually came
-                                // from to verify the message authenticity.
-                                //
+                                // check the PID of the transmission is our PPL service so we can detect tempering
                                 let pipe_pid = match get_pid_from_pipe(&connected_client) {
                                     Some(p) => p,
                                     None => {
@@ -72,12 +62,15 @@ pub async fn run_ipc_for_etw(
                                         todo!()
                                     },
                                 };
-                                if pipe_pid != etw_msg.get_pid() {
+                                // SAFETY: The PPL_SERVICE_PID is only initialised once mutably, so is safe to read.
+                                if pipe_pid != unsafe {PPL_SERVICE_PID} {
                                     // todo this is bad and should do something
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
 
-                                logger.log(LogLevel::Success, &format!("Data from ETW pipe: {:?}.", etw_msg));
+                                // 
+                                // Send the data via the channel to the engine 
+                                //
                                 if let Err(e) = tx_cl.send(etw_msg).await {
                                     logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from ETW. {e}"));
                                 }
