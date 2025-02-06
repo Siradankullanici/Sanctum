@@ -1,7 +1,7 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::{ApiOrigin, EtwMessage, HasPid, OpenProcessData, Process};
-use tokio::{sync::{mpsc, oneshot, Mutex, RwLock}, time::sleep};
+use shared_std::processes::{EtwMessage, HasPid, Process, EVENT_SOURCE_SYSCALL_HOOK};
+use tokio::{sync::{mpsc, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
 
@@ -78,7 +78,7 @@ impl Core {
                 match recv_syscall_notification {
                     shared_std::processes::Syscall::OpenProcess(open_process_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_open_process_add(open_process_data.inner.get_pid() as u64, ApiOrigin::SyscallHook);
+                        lock.ghost_hunt_open_process_add(open_process_data.inner.get_pid() as u64, EVENT_SOURCE_SYSCALL_HOOK);
                     },
                     shared_std::processes::Syscall::VirtualAllocEx(virtual_alloc_ex_data) => {
                         let mut lock = self.process_monitor.write().await;

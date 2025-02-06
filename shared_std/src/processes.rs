@@ -2,6 +2,19 @@ use std::time::SystemTime;
 
 use serde::{Deserialize, Serialize};
 
+
+/****************************** CONSTANT *******************************/
+
+/// The event source came from the kernel, intercepted by the driver
+pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
+/// The event source came from a syscall hook
+pub const EVENT_SOURCE_SYSCALL_HOOK: u8  = 0b0010;
+/// The event source came from the PPL Service receiving ETW:TI
+pub const EVENT_SOURCE_ETW: u8           = 0b0100;
+
+
+/****************************** GENERAL *******************************/
+
 /// The Process is a structural representation of an individual process thats
 /// running on the host machine, and keeping track of risk scores, and activity conducted
 /// by processes. 
@@ -22,22 +35,16 @@ pub struct Process {
 pub struct GhostHuntingTimers {
     pub timer: SystemTime,
     pub event_type: EventTypeWeighted,
-    pub origin: ApiOrigin,
+    /// todo update docs
+    pub origin: u8,
     /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
     /// sources of telemetry, we cannot do a 1:1 cancellation process.
-    pub cancellable_by: Vec<ApiOrigin>,
+    /// todo update docs
+    pub cancellable_by: u8,
 }
 
 pub trait HasPid {
     fn get_pid(&self) -> u32;
-}
-
-/// Defines whether a syscall type API was caught in the kernel, in a syscall hook, or from ETW
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ApiOrigin {
-    Kernel,
-    SyscallHook,
-    Etw,
 }
 
 

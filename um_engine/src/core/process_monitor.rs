@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{ApiOrigin, GhostHuntingTimers, Process, EventTypeWeighted, VirtualAllocExEtw, VirtualAllocExSyscall};
+use shared_std::processes::{EventTypeWeighted, GhostHuntingTimers, Process, VirtualAllocExEtw, VirtualAllocExSyscall, EVENT_SOURCE_ETW, EVENT_SOURCE_KERNEL, EVENT_SOURCE_SYSCALL_HOOK};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -15,44 +15,7 @@ const MAX_WAIT_ETW: Duration = Duration::from_millis(2300); // 3 seconds - this 
 // engine. If it needs to be, then the impl will be moved to the shared crate.
 pub trait ProcessImpl {
     fn update_process_risk_score(&mut self, score: EventTypeWeighted);
-    fn add_ghost_hunt_timer(&mut self, syscall_origin: ApiOrigin, event_type: EventTypeWeighted);
-}
-
-/// A trait to allow us to specify the implementation in this crate as opposed to in the shared crate; it makes more logical sense to have this 
-/// implemented in the current crate.
-pub trait SyscalLTypeImpl {
-    fn cancellable_by(syscall_type: &EventTypeWeighted) -> Vec<ApiOrigin>;
-}
-
-impl SyscalLTypeImpl for EventTypeWeighted {
-    /// Determine what events can cancel a given syscall type.
-    /// 
-    /// # Args
-    /// The function accepts a reference to the syscall type you are wanting to query information on.
-    /// 
-    /// # Returns
-    /// Will return a vector of [`ApiOrigin`] which gives situational information on how **many** events to expect
-    /// as well as the exact Sanctum API's which will be able to cancel out the Ghost Hunt timers.
-    fn cancellable_by(syscall_type: &EventTypeWeighted) -> Vec<ApiOrigin> {
-        let mut origins: Vec<ApiOrigin> = vec![];
-
-        match syscall_type {
-            EventTypeWeighted::OpenProcess => {
-                origins.push(ApiOrigin::Kernel);
-                origins.push(ApiOrigin::SyscallHook);
-            },
-            EventTypeWeighted::VirtualAllocEx => {
-                // origins.push(ApiOrigin::Kernel);
-                origins.push(ApiOrigin::Etw);
-                origins.push(ApiOrigin::SyscallHook);
-            },
-            EventTypeWeighted::CreateRemoteThread => {
-                todo!()
-            },
-        }
-    
-        origins
-    }
+    fn add_ghost_hunt_timer(&mut self, notification_origin: u8, event_type: EventTypeWeighted);
 }
 
 static IGNORED_PROCESSES: [&str; 4] = [
@@ -231,7 +194,7 @@ impl ProcessMonitor {
             return;
         }
 
-        self.ghost_hunt_open_process_add(pid, ApiOrigin::Kernel);
+        self.ghost_hunt_open_process_add(pid, EVENT_SOURCE_KERNEL);
 
 
         // TODO: the below logic isn't quite right - it turns out after some experimentation assigning risk scores to 
@@ -337,7 +300,8 @@ impl ProcessMonitor {
             let mut index: usize = 0; // index of iterator over the ghost timers
             for item in &process.clone().ghost_hunting_timers {
                 if let Ok(t) = item.timer.elapsed() {
-                    if item.cancellable_by.contains(&ApiOrigin::Etw) {
+                    // if we are waiting on the ETW feed, it takes a little longer
+                    if item.cancellable_by & EVENT_SOURCE_ETW == EVENT_SOURCE_ETW {
                         if t > MAX_WAIT_ETW {
                             process.update_process_risk_score(item.event_type.clone());
                             process.ghost_hunting_timers.remove(index);
@@ -360,9 +324,14 @@ impl ProcessMonitor {
     }
 
     /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made
-    pub fn ghost_hunt_open_process_add(&mut self, pid: u64, syscall_origin: ApiOrigin) {
+    /// 
+    /// # Args
+    /// - pid: The pid of the process making the open process request
+    /// - event_origin: The event origin for where the APi call was intercepted; must be an `EVENT_ORIGIN_` starting constant found in
+    /// [`shared_std::processes`]
+    pub fn ghost_hunt_open_process_add(&mut self, pid: u64, event_origin: u8) {
         if let Some(process) = self.processes.get_mut(&pid) {
-            process.add_ghost_hunt_timer(syscall_origin, EventTypeWeighted::OpenProcess);
+            process.add_ghost_hunt_timer(event_origin, EventTypeWeighted::OpenProcess);
         } else {
             // todo ok something very wrong if this gets called!!
             let log = Log::new();
@@ -373,7 +342,7 @@ impl ProcessMonitor {
     /// Handle a VirtualAllocEx signal being received from a remote process from the injected EDR DLL.
     pub fn ghost_hunt_virtual_alloc_ex_add_from_dll(&mut self, signal: VirtualAllocExSyscall) {
         let log = Log::new();
-        let syscall_origin = ApiOrigin::SyscallHook;
+        let syscall_origin = EVENT_SOURCE_SYSCALL_HOOK;
 
         // select the process
         let pid = signal.pid as u64;
@@ -391,7 +360,7 @@ impl ProcessMonitor {
     /// Handle a VirtualAllocEx signal being received from a remote process.
     pub fn ghost_hunt_virtual_alloc_ex_add_from_etw(&mut self, signal: VirtualAllocExEtw) {
         let log = Log::new();
-        let syscall_origin = ApiOrigin::Etw;
+        let syscall_origin = EVENT_SOURCE_ETW;
 
         // select the process
         let pid = signal.pid as u64;
@@ -427,10 +396,15 @@ impl ProcessImpl for Process {
     /// 
     /// In the event an API timer is added, and one exists from the opposite source, then it will be removed as per my 
     /// ghost hunting technique - this means there was a successful match and no apparent syscall evasion took place.
-    fn add_ghost_hunt_timer(&mut self, notification_origin: ApiOrigin, event_type: EventTypeWeighted) {
+    /// 
+    /// # Args
+    /// - `event_origin`: The event origin for where the APi call was intercepted; must be an `EVENT_ORIGIN_` starting constant found in
+    /// [`shared_std::processes`]
+    /// -`event_type` The APi called from the weighted [`shared_std::processes::EventTypeWeighted`]
+    fn add_ghost_hunt_timer(&mut self, event_origin: u8, event_type: EventTypeWeighted) {
 
         // Get information on what API's are able to cancel out the ghost timers.
-        let cancellable_by = EventTypeWeighted::cancellable_by(&event_type);
+        let cancellable_by = find_cancellable_apis_ghost_hunting(&event_type);
 
         // If the timers are empty; then its the first in so we can add it to the list straight up.
         // Else, we will look for a match on the type.
@@ -439,31 +413,29 @@ impl ProcessImpl for Process {
                 let mut t = GhostHuntingTimers {
                     timer: SystemTime::now(),
                     event_type: event_type.clone(),
-                    origin: notification_origin.clone(),
+                    origin: event_origin,
                     cancellable_by,
                 };
     
                 // remove the current notification from the cancellable by (prevent dangling timers)
-                if remove_cancellable_by_match(&mut t, &notification_origin).is_none() {
-                    let logger = Log::new();
-                    logger.panic(&format!("Could not find {:?} in timer. This should never happen.", notification_origin));
-                }
+                remove_specific_cancellable_event(&mut t, event_origin);
     
                 t
             };
+
             self.ghost_hunting_timers.push(timer);
         } else {
             let mut index: usize = 0;
             for timer in &mut self.ghost_hunting_timers {
-                // Pf the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
+                // If the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
                 // Part of the core Ghost Hunting logic
-                // if all the cancellation signals received, remove the timer.
-                if remove_cancellable_by_match(timer, &notification_origin).is_some() {
-                    if timer.cancellable_by.is_empty() {
-                        self.ghost_hunting_timers.remove(index);
-                    }
-                    return
-                };
+                remove_specific_cancellable_event(timer, event_origin);
+
+                // If everything is cancelled out (aka all bit fields set to 0 remove the timer completely from the process)
+                if timer.cancellable_by == 0 {
+                    self.ghost_hunting_timers.remove(index);
+                    return;
+                }
 
                 index += 1;
             }
@@ -473,37 +445,31 @@ impl ProcessImpl for Process {
                 let mut t = GhostHuntingTimers {
                     timer: SystemTime::now(),
                     event_type: event_type.clone(),
-                    origin: notification_origin.clone(),
+                    origin: event_origin,
                     cancellable_by,
                 };
     
                 // remove the current notification from the cancellable by (prevent dangling timers)
-                if remove_cancellable_by_match(&mut t, &notification_origin).is_none() {
-                    let logger = Log::new();
-                    logger.panic(&format!("Could not find {:?} in timer. This should never happen.", notification_origin));
-                }
+                remove_specific_cancellable_event(&mut t, event_origin);
     
                 t
             };
             self.ghost_hunting_timers.push(timer);
+            
         }
     }
 }
 
-/// Remove an API from a given Ghost Hunting timer.
+/// Remove an event source from a given Ghost Hunting timer.
 /// 
-/// This function will modify the timer to remove a cancellable API origin from the Vec.
+/// This function will modify the timer object to remove a cancellable event origin in place.
 /// 
-/// # Returns
-/// - Some: If this function found a cancelable origin type, it will return Some
-/// - None: If the cancellable type was not found, it will return none.
-fn remove_cancellable_by_match(timer: &mut GhostHuntingTimers, api_origin: &ApiOrigin) -> Option<()> {
-    if let Some(index) = timer.cancellable_by.iter().position(|x| *x == *api_origin) {         
-        timer.cancellable_by.remove(index);
-        return Some(());
-    }
-
-    None
+/// # Args
+/// - `timer`: A mutable reference to the GhostHuntingTimer for a given process
+/// - `event_origin`: The event origin for where the APi call was intercepted; must be an `EVENT_ORIGIN_` starting constant found in
+/// [`shared_std::processes`]
+fn remove_specific_cancellable_event(timer: &mut GhostHuntingTimers, event_origin: u8) {
+    timer.cancellable_by = timer.cancellable_by as u8 ^ event_origin; // flip the set bit back to a 0
 }
 
 /// Enumerate all processes and add them to the active process monitoring hashmap.
@@ -705,4 +671,20 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     }
 
     Ok(())
+}
+
+fn find_cancellable_apis_ghost_hunting(syscall_type: &EventTypeWeighted) -> u8 {
+    let bits: u8 = match syscall_type {
+        EventTypeWeighted::OpenProcess => {
+            EVENT_SOURCE_KERNEL | EVENT_SOURCE_SYSCALL_HOOK
+        },
+        EventTypeWeighted::VirtualAllocEx => {
+            EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK
+        },
+        EventTypeWeighted::CreateRemoteThread => {
+            todo!()
+        },
+    };
+
+    bits
 }
