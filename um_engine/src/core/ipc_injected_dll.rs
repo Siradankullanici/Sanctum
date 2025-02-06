@@ -81,7 +81,6 @@ pub async fn run_ipc_for_injected_dll(
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
 
-                                logger.log(LogLevel::Success, &format!("Data from injected DLL pipe: {:?}.", syscall));
                                 if let Err(e) = tx_cl.send(syscall).await {
                                     logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
                                 }

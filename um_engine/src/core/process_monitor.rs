@@ -9,7 +9,7 @@ use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 /// The max wait time from events coming from an injected Sanctum DLL & from the driver hooks
 const MAX_WAIT: Duration = Duration::from_millis(600);
 /// The ETW max wait time needs extending, as this takes a little longer to come through
-const MAX_WAIT_ETW: Duration = Duration::from_millis(2300); // 2.3 seconds - this is quite long, but alas
+const MAX_WAIT_ETW: Duration = Duration::from_millis(2300); // 3 seconds - this is quite long, but alas
 
 // Allow an impl block in this module, as opposed to implementing it outside of here; seeing as the impl is likely not required outside the 
 // engine. If it needs to be, then the impl will be moved to the shared crate.
@@ -42,6 +42,7 @@ impl SyscalLTypeImpl for EventTypeWeighted {
                 origins.push(ApiOrigin::SyscallHook);
             },
             EventTypeWeighted::VirtualAllocEx => {
+                // origins.push(ApiOrigin::Kernel);
                 origins.push(ApiOrigin::Etw);
                 origins.push(ApiOrigin::SyscallHook);
             },
@@ -372,7 +373,7 @@ impl ProcessMonitor {
     /// Handle a VirtualAllocEx signal being received from a remote process from the injected EDR DLL.
     pub fn ghost_hunt_virtual_alloc_ex_add_from_dll(&mut self, signal: VirtualAllocExSyscall) {
         let log = Log::new();
-        let syscall_origin = ApiOrigin::Etw;
+        let syscall_origin = ApiOrigin::SyscallHook;
 
         // select the process
         let pid = signal.pid as u64;
@@ -426,7 +427,7 @@ impl ProcessImpl for Process {
     /// 
     /// In the event an API timer is added, and one exists from the opposite source, then it will be removed as per my 
     /// ghost hunting technique - this means there was a successful match and no apparent syscall evasion took place.
-    fn add_ghost_hunt_timer(&mut self, syscall_origin: ApiOrigin, event_type: EventTypeWeighted) {
+    fn add_ghost_hunt_timer(&mut self, notification_origin: ApiOrigin, event_type: EventTypeWeighted) {
 
         // Get information on what API's are able to cancel out the ghost timers.
         let cancellable_by = EventTypeWeighted::cancellable_by(&event_type);
@@ -434,34 +435,75 @@ impl ProcessImpl for Process {
         // If the timers are empty; then its the first in so we can add it to the list straight up.
         // Else, we will look for a match on the type.
         if self.ghost_hunting_timers.is_empty() {
-            self.ghost_hunting_timers.push(GhostHuntingTimers {
-                timer: SystemTime::now(),
-                event_type,
-                origin: syscall_origin,
-                cancellable_by,
-            });
+            let timer = {
+                let mut t = GhostHuntingTimers {
+                    timer: SystemTime::now(),
+                    event_type: event_type.clone(),
+                    origin: notification_origin.clone(),
+                    cancellable_by,
+                };
+    
+                // remove the current notification from the cancellable by (prevent dangling timers)
+                if remove_cancellable_by_match(&mut t, &notification_origin).is_none() {
+                    let logger = Log::new();
+                    logger.panic(&format!("Could not find {:?} in timer. This should never happen.", notification_origin));
+                }
+    
+                t
+            };
+            self.ghost_hunting_timers.push(timer);
         } else {
-            // let mut index: usize = 0;
+            let mut index: usize = 0;
             for timer in &mut self.ghost_hunting_timers {
                 // Pf the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
                 // Part of the core Ghost Hunting logic
-                if let Some(index) = timer.cancellable_by.iter().position(|x| *x == syscall_origin) {
-                    self.ghost_hunting_timers.remove(index);
-                    let logger = Log::new();
-                    logger.log(LogLevel::Success, &format!("Matched on {:?}", syscall_origin));
-                    return;
-                }
+                // if all the cancellation signals received, remove the timer.
+                if remove_cancellable_by_match(timer, &notification_origin).is_some() {
+                    if timer.cancellable_by.is_empty() {
+                        self.ghost_hunting_timers.remove(index);
+                    }
+                    return
+                };
+
+                index += 1;
             }
 
             // we did not match, so add the element 
-            self.ghost_hunting_timers.push(GhostHuntingTimers {
-                timer: SystemTime::now(),
-                event_type,
-                origin: syscall_origin,
-                cancellable_by,
-            });
+            let timer = {
+                let mut t = GhostHuntingTimers {
+                    timer: SystemTime::now(),
+                    event_type: event_type.clone(),
+                    origin: notification_origin.clone(),
+                    cancellable_by,
+                };
+    
+                // remove the current notification from the cancellable by (prevent dangling timers)
+                if remove_cancellable_by_match(&mut t, &notification_origin).is_none() {
+                    let logger = Log::new();
+                    logger.panic(&format!("Could not find {:?} in timer. This should never happen.", notification_origin));
+                }
+    
+                t
+            };
+            self.ghost_hunting_timers.push(timer);
         }
     }
+}
+
+/// Remove an API from a given Ghost Hunting timer.
+/// 
+/// This function will modify the timer to remove a cancellable API origin from the Vec.
+/// 
+/// # Returns
+/// - Some: If this function found a cancelable origin type, it will return Some
+/// - None: If the cancellable type was not found, it will return none.
+fn remove_cancellable_by_match(timer: &mut GhostHuntingTimers, api_origin: &ApiOrigin) -> Option<()> {
+    if let Some(index) = timer.cancellable_by.iter().position(|x| *x == *api_origin) {         
+        timer.cancellable_by.remove(index);
+        return Some(());
+    }
+
+    None
 }
 
 /// Enumerate all processes and add them to the active process monitoring hashmap.
