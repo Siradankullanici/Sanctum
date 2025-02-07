@@ -10,6 +10,8 @@ I have started a blog series on Sanctum, you can check it out [on my blog here](
 
 Currently in its early stages, I have a plan for the project which I will update in due course. If you like this project, or my work, please feel free to reach out!
 
+If you are here to read some code; the best place to start probably is **um_engine**, followed by either the **driver** or **injected_dll**.
+
 ### Project plan
 
 This is a high level overview for how I would like to structure this project.
