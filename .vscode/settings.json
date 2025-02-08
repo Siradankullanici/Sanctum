@@ -51,6 +51,7 @@
         "PEPROCESS",
         "PHANDLE",
         "PIRP",
+        "PKTRAP",
         "POBJECT",
         "ppid",
         "PREOP",

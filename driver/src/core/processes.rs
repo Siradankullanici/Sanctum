@@ -1,9 +1,6 @@
-// ******************************************************************** //
-// ************************** CORE CALLBACKS ************************** //
-// ******************************************************************** //
+//! This module handles callback implementations and and other function related to processes.
 
 use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
-
 use alloc::vec::Vec;
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
@@ -12,7 +9,7 @@ use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcess
 use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
 
 /// Callback function for a new process being created on the system.
-pub unsafe extern "C" fn core_callback_notify_ps_create(process: PEPROCESS, pid: HANDLE, created: *mut PS_CREATE_NOTIFY_INFO) {
+pub unsafe extern "C" fn process_create_callback(process: PEPROCESS, pid: HANDLE, created: *mut PS_CREATE_NOTIFY_INFO) {
 
     //
     // If `created` is not a null pointer, this means a new process was started, and you can query the 
