@@ -10,7 +10,7 @@ extern crate alloc;
 #[cfg(not(test))]
 extern crate wdk_panic;
 
-use core::{processes::{process_create_callback, ProcessHandleCallback}, syscall_handlers::{register_syscall_hooks, remove_alt_syscall_handler_from_threads}, threads::{set_thread_creation_callback, thread_callback}};
+use core::{processes::{process_create_callback, ProcessHandleCallback}, syscall_handlers::{register_syscall_hooks, SyscallHandler}, threads::{set_thread_creation_callback, thread_callback}};
 use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::{boxed::Box, format};
 use ffi::IoGetCurrentIrpStackLocation;
@@ -20,7 +20,7 @@ use utils::{Log, LogLevel, ToU16Vec};
 use wdk::{nt_success, println};
 use wdk_mutex::{grt::Grt, kmutex::KMutex};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObUnRegisterCallbacks, PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, PsSetCreateThreadNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
+    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObUnRegisterCallbacks, PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
 };
 
 mod ffi;
@@ -163,14 +163,14 @@ pub unsafe extern "C" fn configure_driver(
     // Core callback functions for the EDR
     //
 
-    // Thread interception
-    set_thread_creation_callback();
-
-    // Custom syscall kernel-side hook
+    // Custom syscall kernel-side hook and ensuring the GRT (wdk_mutex) is set up for the syscall hooks
     if register_syscall_hooks().is_err() {
-        println!("[sanctum] [-] Failed calling register_syscall_hooks.");
+        println!("[sanctum] [-] register_syscall_hooks failed.");
         return 1;
     }
+
+    // Thread interception
+    set_thread_creation_callback();
 
     // Intercepting process creation
     let res = PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8);
@@ -232,7 +232,11 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     }
 
     // remove the alt syscall handler changes we made to threads
-    remove_alt_syscall_handler_from_threads();
+    {
+        let mtx = Grt::get_fast_mutex("syscall_handler").expect("Could not get syscall_handler fast mutex.");
+        let lock: wdk_mutex::fast_mutex::FastMutexGuard<'_, SyscallHandler> = mtx.lock().unwrap();
+        lock.remove_alt_syscall_handler_from_threads();
+    }
 
     // drop the driver messages
     let ptr = DRIVER_MESSAGES.load(Ordering::SeqCst);
