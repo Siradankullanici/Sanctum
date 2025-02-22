@@ -147,10 +147,10 @@ fffff802`cf9d7a76 nt!PspSyscallProvidersEnabled = <no type information>
 fffff802`cf0e22b0 nt!VslRegisterSyscallProviderServiceTableMetadata (VslRegisterSyscallProviderServiceTableMetadata)
 fffff802`cf1488f0 nt!PsQuerySyscallProviderInformation (PsQuerySyscallProviderInformation)
 fffff802`cf148eac nt!PspLookupSyscallProviderByIdNoLock (PspLookupSyscallProviderByIdNoLock)
-fffff802`cf148950 nt!PsRegisterSyscallProvider (PsRegisterSyscallProvider)
+fffff802`cf148950 nt!**PsRegisterSyscallProvider** (PsRegisterSyscallProvider)
 fffff802`cf9d62c8 nt!PspSyscallProviders = <no type information>
 fffff802`cf148f20 nt!PspQuerySyscallProviderProcessList (PspQuerySyscallProviderProcessList)
-fffff802`cf148fac nt!PspSyscallProviderOptIn (PspSyscallProviderOptIn)
+fffff802`cf148fac nt!**PspSyscallProviderOptIn** (PspSyscallProviderOptIn)
 fffff802`cf0cb798 nt!PsRegisterSyscallProviderServiceTableMetadata (PsRegisterSyscallProviderServiceTableMetadata)
 fffff802`cf148da8 nt!PspGetNextSyscallProviderProcess (PspGetNextSyscallProviderProcess)
 fffff802`cefa2cbc nt!PspLookupSyscallProviderById (PspLookupSyscallProviderById)
@@ -174,3 +174,70 @@ fffff801`d4bc4a84 nt!VslVsmEnabled = <no type information>
 ed nt!PspSyscallProvidersEnabled 1
 dw ntkrnlmp!PspSyscallProvidersEnabled L1
 eb fffff801`d4bd7a76 01
+
+
+##########
+
+12/02/25
+
+PsInitializeSyscallProviders -> sets the bit to 1 if Vslp
+
+look at wqhere PsInitializeSyscallProviders is called from!
+
+
+
+################
+
+PspGetNextSyscallProviderProcess -> Maybe does this get called somehow? Comes from PsQuerySyscallProviderInformation. Nothing seems to reference PsQuerySyscallProviderInformation, **can i call it myself?**
+
+Searching on SyscallProvider -> PsRegisterSyscallProvider (which is called n my code)
+
+
+###########
+
+
+new fn from w10
+
+- PsRegisterSyscallProviderServiceTableMetadata (from within KeAddSystemServiceTable, which sets up the SSDT)
+
+VslpEnterIumSecureMode enters secure mode
+
+I think what you wanna do is break on `PsInitializeSyscallProviders`, that requires the Vsl thing which seems to hopefully be turned on by `VslpIumPhase0Initialize`, and see if the bit is set. Then see if `PsRegisterSyscallProvider` will recognise the bit
+
+
+Step 1:
+
+- PsInitializeSyscallProviders: Sets PspSyscallProvidersEnabled = 1;
+- PsRegisterSyscallProvider: 
+
+
+Questions:
+
+- What happens if we call PsQuerySyscallProviderInformation
+- What is PspAttachProcessToSyscallProvider (nb comes from opt in fn)
+- PspQuerySyscallProviderProcessList -> Very interested in this, can i call it?
+- What does the Vsl bit get set to when running under new mode
+- What is the syscall bit set to without the init fn running?
+- I think i want to follow PsRegisterSyscallProvider to see what it does with the bit
+
+###############
+
+## For finding struct at gs:188h
+
+Check PCR layout `dt nt!_KPCR`
+
+#############
+
+
+KeAddSystemServiceTable possibly back in business - the W10 build follows on from this article where it checks arg5 > 1, but W11 doesn't, and seeing
+as through we may be using the KiSystemServiceUser stuff into system service tables, they may have reenabled this?
+
+https://insinuator.net/2015/12/investigating-memory-analysis-tools-ssdt-hooking-via-pointer-replacement/
+
+![alt text](image-6.png)
+
+KEEP AN EYE OUT FOR nt!KeServiceDescriptorTable
+
+
+SO - removing the 2nd index shadow table (from `KeAddSystemServiceTable`) at `KeServiceDescriptorTableShadow+0x20` does pass the first gate; but then we fail on ntkrnlmp!PspSyscallProvidersEnabled within `PsRegisterSyscallProviderServiceTableMetadata`.
+Via: `eq KeServiceDescriptorTableShadow + 20 0`.

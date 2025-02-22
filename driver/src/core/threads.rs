@@ -3,7 +3,7 @@
 use core::{arch::asm, ffi::c_void};
 
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, PsGetCurrentProcessId, PsSetCreateThreadNotifyRoutine}, BOOLEAN, DISPATCH_LEVEL, PETHREAD};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, PsGetCurrentProcessId, PsGetCurrentThreadId, PsSetCreateThreadNotifyRoutine}, BOOLEAN, DISPATCH_LEVEL, PETHREAD};
 
 use crate::core::syscall_handlers::set_information_for_alt_syscall;
 
@@ -32,7 +32,10 @@ pub unsafe extern "C" fn thread_callback(pid: *mut c_void, thread_id: *mut c_voi
     //
     // Set up the thread so that it is handled via the Alt Syscall process
     //
-    set_information_for_alt_syscall(pid);
+
+    // todo undo these :)
+    // println!("pid via param: {:?}, pid via fn: {:?}", pid, PsGetCurrentProcessId());
+    // set_information_for_alt_syscall(PsGetCurrentProcessId());
 
     // As PsGetCurrentThread is not available in the Rust wdk; read the gs register offset 0x188, then casting into a PETHREAD.
     // In the C implementation this is as follows:
