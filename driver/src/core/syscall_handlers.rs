@@ -1,3 +1,5 @@
+//! **Update**: It seems as though this is FULLY deprecated in Windows 11, so not currently used,
+//! 
 //! This module deals with kernel side hooks of a syscall we can register via the 
 //! undocumented PsRegisterAltSystemCallHandler routine, and we can get its address through
 //! `MmGetSystemRoutineAddress`. Good resource on this https://lesnik.cc/hooking-all-system-calls-in-windows-10-20h1/.
