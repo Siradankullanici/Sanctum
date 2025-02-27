@@ -29,8 +29,8 @@ fn main() {
         Err(e) => panic!("[!] An error occurred whilst trying to open a handle to the driver. {e}"),
     };
 
-    if let Err(_) = unsafe { InstallELAMCertificateInfo(handle) } {
-        panic!("[!] Failed to install ELAM certificate.");
+    if let Err(e) = unsafe { InstallELAMCertificateInfo(handle) } {
+        panic!("[!] Failed to install ELAM certificate. Error: {e}");
     }
 
     println!("[+] ELAM certificate installed successfully!");

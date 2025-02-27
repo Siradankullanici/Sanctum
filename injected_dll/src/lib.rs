@@ -91,7 +91,7 @@ impl<'a> StubAddresses<'a> {
         // Get function pointers to our callback symbols
         //
 
-        // open_process
+        // OpenProcess
         let open_process_fn_addr = unsafe { GetProcAddress(h_sanc_dll, s!("open_process")) };
         let open_process_fn_addr = match open_process_fn_addr {
             None => {
@@ -101,7 +101,7 @@ impl<'a> StubAddresses<'a> {
             Some(address) => address as *const (),
         } as usize;
 
-        // open_process
+        // VirtualAllocEx
         let virtual_alloc_stub = unsafe { GetProcAddress(h_sanc_dll, s!("virtual_alloc_ex")) };
         let virtual_alloc_stub = match virtual_alloc_stub {
             None => {
