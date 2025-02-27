@@ -1,7 +1,7 @@
 #![feature(naked_functions)]
 
-use std::{collections::HashMap, ffi::c_void};
-use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use std::{arch::asm, collections::HashMap, ffi::c_void};
+use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, GetLastError, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::{FlushInstructionCache, WriteProcessMemory}, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use windows::core::s;
 
 mod stubs;
@@ -48,6 +48,7 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
     let stub_addresses = StubAddresses::new();
 
     patch_ntdll(&stub_addresses);
+    unsafe { MessageBoxA(None, s!("break"), s!("break"), MB_OK) };
 
 
     resume_all_threads(suspended_handles);
@@ -111,6 +112,16 @@ impl<'a> StubAddresses<'a> {
             Some(address) => address as *const (),
         } as usize;
 
+        // WriteProcessMemory
+        let nt_write_virtual_memory = unsafe { GetProcAddress(h_sanc_dll, s!("nt_write_virtual_memory")) };
+        let nt_write_virtual_memory = match nt_write_virtual_memory {
+            None => {
+                unsafe { MessageBoxA(None, s!("Could not get fn addr nt_write_virtual_memory"), s!("Could not get fn addr nt_write_virtual_memory"), MB_OK) };
+                panic!("Oh no :("); // todo dont panic a process?
+            },
+            Some(address) => address as *const (),
+        } as usize;
+
 
         //
         // Get function pointers to the functions we wish to hook
@@ -136,6 +147,20 @@ impl<'a> StubAddresses<'a> {
             Some(address) => address as *const (),
         } as usize;
 
+        // NtWriteVirtualMemory
+        let zwvm = unsafe { GetProcAddress(h_ntdll, s!("NtWriteVirtualMemory")) };
+        let zwvm = match zwvm {
+            None => {
+                unsafe { MessageBoxA(None, s!("Could not get fn addr NtWriteVirtualMemory"), s!("Could not get fn addr NtWriteVirtualMemory"), MB_OK) };
+                panic!("Oh no :("); // todo dont panic a process?
+            },
+            Some(address) => address as *const (),
+        } as usize;
+
+
+        //
+        // Insert into the hashmap tracking the address resolutions
+        //
         let mut hm = HashMap::new();
         hm.insert("ZwOpenProcess", Addresses {
             edr: open_process_fn_addr,
@@ -145,6 +170,11 @@ impl<'a> StubAddresses<'a> {
             edr: virtual_alloc_stub,
             ntdll: zwavm,
         });
+        hm.insert("NtWriteVirtualMemory", Addresses {
+            edr: nt_write_virtual_memory,
+            ntdll: zwvm,
+        });
+        
 
         Self {
             addresses: hm,
@@ -175,29 +205,32 @@ fn patch_ntdll(addresses: &StubAddresses) {
             0x90, 0x90,
         ];
 
-        let proc_hand = unsafe { GetCurrentProcess() };
-        let mut bytes_written: usize = 0;
-        let _ = unsafe {
-            WriteProcessMemory(
-                proc_hand, 
-                item.ntdll as *const _,
-                buffer.as_ptr() as *const _, 
-                buffer.len(), 
-                Some(&mut bytes_written)
-            )
-        };
+        //
+        // As we are patching memory - we cannot use WriteProcessMemory which is one of the patched / hooked functions 
+        // by the EDR. Instead of using the windows API we can just directly use the Rust stdlib to write to the memory
+        // address via copy_nonoverlapping.
+        //
+        // Because we aren't now using WriteProcessMemory, the memory protection needs changing of the .text segments of 
+        // ntdll to allow us to write to it via the stdlib.
+        //
+
+        // first change protection of this region, determined by the size of the nop overwrite
+        let mut old_protect: PAGE_PROTECTION_FLAGS = PAGE_PROTECTION_FLAGS::default();
+        if unsafe { VirtualProtect(item.ntdll as *const _, buffer.len(), PAGE_EXECUTE_READWRITE, &mut old_protect) }.is_err() {
+            panic!("[-] Failed to change protection. {}", unsafe { GetLastError().0 }) // todo should not panic
+        }
+
+        // now we can do the writes etc
+        let addr = buffer.as_ptr();
+        let len = buffer.len();
+
+        println!("buf: {:p}, ntdll: {:X}, len: {}", addr, item.ntdll, len);
+        
+        unsafe { std::ptr::copy_nonoverlapping(addr, item.ntdll as *mut _, len) };
 
         // write movabs rax, _ (thanks to https://defuse.ca/online-x86-assembler.htm#disassembly)
         let mob_abs_rax: [u8; 2] = [0x48, 0xB8];
-        let _ = unsafe {
-            WriteProcessMemory(
-                proc_hand, 
-                item.ntdll as *const _,
-                mob_abs_rax.as_ptr() as *const _, 
-                mob_abs_rax.len(), 
-                None,
-            )
-        };
+        unsafe { std::ptr::copy_nonoverlapping(mob_abs_rax.as_ptr(), item.ntdll as *mut _, mob_abs_rax.len()) };
 
         //
         // convert the address of the function to little endian (8) bytes and write them at the correct offset
@@ -209,27 +242,22 @@ fn patch_ntdll(addresses: &StubAddresses) {
         }
 
         // write it
-        let _ = unsafe {
-            WriteProcessMemory(
-                proc_hand, 
-                (item.ntdll + 2) as *const _,
-                addr_bytes.as_ptr() as *const _, 
-                addr_bytes.len(), 
-                None,
-            )
-        };
+        unsafe { std::ptr::copy_nonoverlapping(addr_bytes.as_ptr(), (item.ntdll + 2) as *mut _, addr_bytes.len()) };
 
         let jmp_bytes: &[u8] = &[0xFF, 0xE0];
-        let _ = unsafe {
-            WriteProcessMemory(
-                proc_hand,
-                (item.ntdll + 10) as *const _,
-                jmp_bytes.as_ptr() as *const _, 
-                jmp_bytes.len(), 
-                None,
-            )
-        };
+        unsafe { std::ptr::copy_nonoverlapping(jmp_bytes.as_ptr(), (item.ntdll + 10) as *mut _, jmp_bytes.len()) };
 
+        // revert the protection
+        if unsafe { VirtualProtect(item.ntdll as *const _, buffer.len(), old_protect, &mut old_protect) }.is_err() {
+            panic!("[-] Failed to change protection. {}", unsafe { GetLastError().0 }) // todo should not panic
+        }
+    }
+
+    // Now the overwrites are done; flush the instruction cache as per remarks at:
+    // https://learn.microsoft.com/en-us/windows/win32/api/memoryapi/nf-memoryapi-virtualprotect
+    let h_process = unsafe { GetCurrentProcess() };
+    if let Err(e) = unsafe { FlushInstructionCache(h_process, None, 0) } {
+        panic!("[-] Could not flush instruction cache. {e}"); // todo should not panic
     }
 
 }

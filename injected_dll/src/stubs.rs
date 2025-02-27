@@ -2,7 +2,7 @@
 
 use std::{arch::asm, ffi::c_void};
 use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall};
-use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
+use windows::{core::{s, PCSTR}, Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use crate::ipc::send_syscall_info_ipc;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
@@ -112,5 +112,23 @@ unsafe extern "system" fn virtual_alloc_ex(
             in("r9") region_size,
             options(nostack),
         );
+    }
+}
+
+#[unsafe(no_mangle)]
+unsafe extern "system" fn nt_write_virtual_memory(
+    handle: *mut c_void,
+    base_address: *mut c_void,
+    buffer: *mut c_void,
+    buf_len: u32,
+    // 5th param not needed for us
+) {
+    // http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FMemory%20Management%2FVirtual%20Memory%2FNtWriteVirtualMemory.html
+
+    let print_str = format!("H: {:p}, base: {:p}", handle, base_address);
+    unsafe { MessageBoxA(None, PCSTR::from_raw(print_str.as_ptr()), PCSTR::from_raw(print_str.as_ptr()), MB_OK) };
+
+    unsafe {
+        asm!("int3");
     }
 }

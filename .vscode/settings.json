@@ -88,6 +88,8 @@
         "wevtutil",
         "Wnode",
         "WORKITEM",
-        "wstring"
+        "wstring",
+        "zwop",
+        "zwvm"
     ]
 }
