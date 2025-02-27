@@ -10,7 +10,7 @@ extern crate alloc;
 #[cfg(not(test))]
 extern crate wdk_panic;
 
-use core::{processes::{process_create_callback, ProcessHandleCallback}, syscall_handlers::{register_syscall_hooks, remove_alt_syscall_handler_from_threads}, threads::{set_thread_creation_callback, thread_callback}};
+use core::{processes::{process_create_callback, ProcessHandleCallback}, threads::{set_thread_creation_callback, thread_callback}};
 use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
 use alloc::{boxed::Box, format};
 use ffi::IoGetCurrentIrpStackLocation;
@@ -166,12 +166,6 @@ pub unsafe extern "C" fn configure_driver(
     // Thread interception
     set_thread_creation_callback();
 
-    // Custom syscall kernel-side hook
-    if register_syscall_hooks().is_err() {
-        println!("[sanctum] [-] Failed calling register_syscall_hooks.");
-        return 1;
-    }
-
     // Intercepting process creation
     let res = PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8);
     if res != STATUS_SUCCESS {
@@ -230,9 +224,6 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
             REGISTRATION_HANDLE.store(null_mut(), Ordering::Relaxed);
         }
     }
-
-    // remove the alt syscall handler changes we made to threads
-    remove_alt_syscall_handler_from_threads();
 
     // drop the driver messages
     let ptr = DRIVER_MESSAGES.load(Ordering::SeqCst);
