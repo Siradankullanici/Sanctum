@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::{EtwMessage, HasPid, Process, EVENT_SOURCE_SYSCALL_HOOK};
+use shared_std::processes::{EtwMessage, EventTypeWithWeight, Process, EVENT_SOURCE_ETW, EVENT_SOURCE_SYSCALL_HOOK};
 use tokio::{sync::{mpsc, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
@@ -71,6 +71,7 @@ impl Core {
         
         //
         // Enter the polling & decision making loop, this here is the core / engine of the usermode engine.
+        // todo: we need to actually inspect what these params are doing and if they are malicious. 
         //
         loop {
             // See if there is a message from the injected DLL
@@ -78,11 +79,17 @@ impl Core {
                 match recv_syscall_notification {
                     shared_std::processes::Syscall::OpenProcess(open_process_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_open_process_add(open_process_data.inner.get_pid() as u64, EVENT_SOURCE_SYSCALL_HOOK);
+                        println!("[BUG] Open process detected from syscall hook");
+                        // BUG: This is being called twice from the kernel leading to a dangling timer; disabling for now
+                        // lock.ghost_hunt_add_event(open_process_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::OpenProcess);
                     },
                     shared_std::processes::Syscall::VirtualAllocEx(virtual_alloc_ex_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_virtual_alloc_ex_add_from_dll(virtual_alloc_ex_data.inner);
+                        lock.ghost_hunt_add_event(virtual_alloc_ex_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::VirtualAllocEx);
+                    },
+                    shared_std::processes::Syscall::WriteVirtualMemory(write_vm_data) => {
+                        let mut lock = self.process_monitor.write().await;
+                        lock.ghost_hunt_add_event(write_vm_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::WriteVirtualMemory);
                     },
                 }
             }
@@ -92,7 +99,7 @@ impl Core {
                 match etw_notification {
                     EtwMessage::VirtualAllocEx(etw_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_virtual_alloc_ex_add_from_etw(etw_data.inner);
+                        lock.ghost_hunt_add_event(etw_data.inner, EVENT_SOURCE_ETW, EventTypeWithWeight::VirtualAllocEx);
                     },
                 }
             }

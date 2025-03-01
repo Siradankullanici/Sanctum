@@ -4,7 +4,7 @@ use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
 use alloc::vec::Vec;
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, PsLookupProcessByProcessId, RtlInitUnicodeString, SeLocateProcessImageName}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
 
 use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
 
@@ -44,7 +44,7 @@ pub unsafe extern "C" fn process_create_callback(process: PEPROCESS, pid: HANDLE
             parent_pid,
             pid,
         };
-        
+
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,
         // add the relevant data to the queue
         if !DRIVER_MESSAGES.load(Ordering::SeqCst).is_null() {
@@ -144,6 +144,16 @@ pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut 
     // if target_pid != source_pid {
     //      println!("PEPROCESS: {:?}, target: {}, source: {}, og access: {}, desired: {}", p_target_process, target_pid as u64, source_pid as u64, og_desired_access, desired_access);
     // }
+
+    if target_pid as u64 == 5228 && source_pid as u64 != 9552 {
+        println!("[sanctum] [i] Sending PROCESS STARTED INFO {:?}", HandleObtained {
+            source_pid: source_pid as u64,
+            dest_pid: target_pid as u64,
+            rights_desired: og_desired_access,
+            rights_given: desired_access,
+        });
+
+    }
 
     if !DRIVER_MESSAGES.load(Ordering::SeqCst).is_null() {
         let obj = unsafe { &mut *DRIVER_MESSAGES.load(Ordering::SeqCst) };

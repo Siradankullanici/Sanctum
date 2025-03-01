@@ -1,9 +1,18 @@
-use std::time::SystemTime;
+use std::{fmt::Display, time::SystemTime};
 
 use serde::{Deserialize, Serialize};
 
 
 /****************************** CONSTANT *******************************/
+
+//
+// The below constants are bitfields which are a design decision over using an enum. The logic of the `um_engine::core::core` 
+// uses the bit fields as a mask to determine which event types (kernel, syscall hook, etw etc) are required to fully cancel
+// out the ghost hunt timers.
+//
+// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
+// only able to be caught by ETW and the syscall hook.
+//
 
 /// The event source came from the kernel, intercepted by the driver
 pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
@@ -28,13 +37,17 @@ pub struct Process {
     pub sanctum_protected_process: bool, // scc (sanctum protected process) defines processes which require additional protections from access / abuse, such as lsass.exe.
     /// Creates a time window in which a process handle must match from a hooked syscall with
     /// the kernel receiving the notification. Failure to match this may be an indicator of hooked syscall evasion.
-    pub ghost_hunting_timers: Vec<GhostHuntingTimers>,
+    pub ghost_hunting_timers: Vec<GhostHuntingTimer>,
 }
 
+/// A `GhostHuntingTimer` is the timer metadata associated with the Ghost Hunting technique on my blog:
+/// https://fluxsec.red/edr-syscall-hooking
+/// 
+/// The data contained in this struct allows timers to be polled and detects abuse of direct syscalls / hells gate.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct GhostHuntingTimers {
+pub struct GhostHuntingTimer {
     pub timer: SystemTime,
-    pub event_type: EventTypeWeighted,
+    pub event_type: EventTypeWithWeight,
     /// todo update docs
     pub origin: u8,
     /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
@@ -45,8 +58,8 @@ pub struct GhostHuntingTimers {
 
 pub trait HasPid {
     fn get_pid(&self) -> u32;
+    fn print_data(&self);
 }
-
 
 /*****************************************************************************/
 /***                         EVENTS FROM SYSCALL HOOK                        */
@@ -66,7 +79,8 @@ pub struct SyscallData<T: HasPid> {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum Syscall {
     OpenProcess(SyscallData<OpenProcessData>),
-    VirtualAllocEx(SyscallData<VirtualAllocExSyscall>)
+    VirtualAllocEx(SyscallData<VirtualAllocExSyscall>),
+    WriteVirtualMemory(SyscallData<WriteVirtualMemoryData>),
 }
 
 impl Syscall {
@@ -74,6 +88,7 @@ impl Syscall {
         match self {
             Syscall::OpenProcess(syscall_data) => syscall_data.inner.pid,
             Syscall::VirtualAllocEx(syscall_data) => syscall_data.inner.pid,
+            Syscall::WriteVirtualMemory(syscall_data) => syscall_data.inner.pid,
         }
     }
 }
@@ -87,6 +102,28 @@ pub struct OpenProcessData {
 impl HasPid for OpenProcessData {
     fn get_pid(&self) -> u32 {
         self.pid
+    }
+    
+    fn print_data(&self) {
+        println!("{:?}", self);
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteVirtualMemoryData {
+    pub pid: u32,
+    pub target_pid: u32,
+    pub base_address: usize,
+    pub buf_len: usize,
+}
+
+impl HasPid for WriteVirtualMemoryData {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
+
+    fn print_data(&self) {
+        println!("{:?}", self);
     }
 }
 
@@ -114,15 +151,20 @@ impl HasPid for VirtualAllocExSyscall {
     fn get_pid(&self) -> u32 {
         self.pid
     }
+
+    fn print_data(&self) {
+        println!("{:?}", self);
+    }
 }
 
 /// Define the different event types that we are monitoring. Each event contains an associated weight 
 /// as to how much this should affect the risk score.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum EventTypeWeighted {
+pub enum EventTypeWithWeight {
     OpenProcess = 20,
     VirtualAllocEx = 50,
     CreateRemoteThread = 60,
+    WriteVirtualMemory = 30,
 }
 
 
@@ -160,5 +202,9 @@ pub struct VirtualAllocExEtw {
 impl HasPid for VirtualAllocExEtw {
     fn get_pid(&self) -> u32 {
         self.pid
+    }
+
+    fn print_data(&self) {
+        println!("{:?}", self);
     }
 }

@@ -1,7 +1,7 @@
 use std::{collections::HashMap, ffi::{c_void, CStr}, time::{Duration, SystemTime}};
 
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
-use shared_std::processes::{EventTypeWeighted, GhostHuntingTimers, Process, VirtualAllocExEtw, VirtualAllocExSyscall, EVENT_SOURCE_ETW, EVENT_SOURCE_KERNEL, EVENT_SOURCE_SYSCALL_HOOK};
+use shared_std::processes::{EventTypeWithWeight, GhostHuntingTimer, HasPid, Process, VirtualAllocExEtw, VirtualAllocExSyscall, EVENT_SOURCE_ETW, EVENT_SOURCE_KERNEL, EVENT_SOURCE_SYSCALL_HOOK};
 use windows::{core::{s, PSTR}, Win32::{Foundation::{CloseHandle, GetLastError, MAX_PATH}, System::{Diagnostics::{Debug::WriteProcessMemory, ToolHelp::{CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA, PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE}}}};
 
 use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
@@ -14,8 +14,8 @@ const MAX_WAIT_ETW: Duration = Duration::from_millis(2300); // 3 seconds - this 
 // Allow an impl block in this module, as opposed to implementing it outside of here; seeing as the impl is likely not required outside the 
 // engine. If it needs to be, then the impl will be moved to the shared crate.
 pub trait ProcessImpl {
-    fn update_process_risk_score(&mut self, score: EventTypeWeighted);
-    fn add_ghost_hunt_timer(&mut self, notification_origin: u8, event_type: EventTypeWeighted);
+    fn update_process_risk_score(&mut self, score: EventTypeWithWeight);
+    fn add_ghost_hunt_timer(&mut self, notification_origin: u8, event_type: EventTypeWithWeight);
 }
 
 static IGNORED_PROCESSES: [&str; 4] = [
@@ -50,6 +50,12 @@ pub enum ProcessErrors {
     FailedToCreateRemoteThread,
     FailedToOpenProcess,
 }
+
+#[derive(Debug)]
+pub struct GhostHuntSource {
+
+}
+
 
 impl ProcessMonitor {
     pub fn new() -> Self {
@@ -164,15 +170,16 @@ impl ProcessMonitor {
             }
         }
 
+        // not bothered about self process handles
         if pid == target {
             return;
         }
-
+        
         // If the source is our engine
         if pid == unsafe {GetCurrentProcessId() as u64} {
             return;
         }
-
+        
         let log = Log::new();
 
 
@@ -194,7 +201,9 @@ impl ProcessMonitor {
             return;
         }
 
-        self.ghost_hunt_open_process_add(pid, EVENT_SOURCE_KERNEL);
+        // BUG: This event is being emitted twice in the kernel.. why? For now, disabling OpenProcess monitoring
+        println!("[BUG] Open process signal received from driver. Pid: {}, Target pid: {}", pid, target);
+        // self.ghost_hunt_open_process_add(pid, EVENT_SOURCE_KERNEL);
 
 
         // TODO: the below logic isn't quite right - it turns out after some experimentation assigning risk scores to 
@@ -292,7 +301,8 @@ impl ProcessMonitor {
             if process.ghost_hunting_timers.is_empty() {
                 continue;
             }
-
+            println!("Timers: {:?}", process.ghost_hunting_timers);
+            
             //
             // In here process each API event we are tracking in the ghost timers.
             //
@@ -323,7 +333,11 @@ impl ProcessMonitor {
         }
     }
 
-    /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made
+
+    /// The entry point for adding the message from an injected DLL that an ZwOpenProcess syscall was made.
+    /// 
+    /// This is breaking the convention slightly from using [`Self::ghost_hunt_add_event`] as a way to add events to the ghost hunting 
+    /// timer and may be refactored in the future to remove this function, but for now, it makes sense.
     /// 
     /// # Args
     /// - pid: The pid of the process making the open process request
@@ -331,7 +345,7 @@ impl ProcessMonitor {
     /// [`shared_std::processes`]
     pub fn ghost_hunt_open_process_add(&mut self, pid: u64, event_origin: u8) {
         if let Some(process) = self.processes.get_mut(&pid) {
-            process.add_ghost_hunt_timer(event_origin, EventTypeWeighted::OpenProcess);
+            process.add_ghost_hunt_timer(event_origin, EventTypeWithWeight::OpenProcess);
         } else {
             // todo ok something very wrong if this gets called!!
             let log = Log::new();
@@ -339,48 +353,37 @@ impl ProcessMonitor {
         }
     }
 
-    /// Handle a VirtualAllocEx signal being received from a remote process from the injected EDR DLL.
-    pub fn ghost_hunt_virtual_alloc_ex_add_from_dll(&mut self, signal: VirtualAllocExSyscall) {
-        let log = Log::new();
-        let syscall_origin = EVENT_SOURCE_SYSCALL_HOOK;
 
-        // select the process
-        let pid = signal.pid as u64;
+    /// A general function for adding a ghost hunt event to the timers.
+    /// 
+    /// # Args
+    /// - `signal`: The signal which has been received by the IPC of the engine listening for Ghost Hunting events.
+    /// This must implement `HasPid`
+    /// - `origin`: A u8 constant representing where the signal came from which can be (from the `shared_std` crate)
+    ///     - EVENT_SOURCE_KERNEL
+    ///     - EVENT_SOURCE_SYSCALL_HOOK
+    ///     - EVENT_SOURCE_ETW
+    /// - `event_type`: The type of event as defined in [`shared_std::processes::EventTypeWithWeight`]
+    pub fn ghost_hunt_add_event(&mut self, signal: impl HasPid, origin: u8, event_type: EventTypeWithWeight) {
+        signal.print_data();
+        let log = Log::new();
+
+        let pid = signal.get_pid() as u64;
         let process = if let Some(p) = self.processes.get_mut(&pid) {
             p
         } else {
-            log.log(LogLevel::Error, &format!("Could not find pid {pid} from ZwAllocateVirtualMemory signal from {:?}.", syscall_origin));
+            log.log(LogLevel::Error, &format!("Could not find pid {pid} from ZwAllocateVirtualMemory signal from {:?}.", origin));
             return;
         };
-        
-        // todo determine different rwx permissions in the future once implemented.
-        process.add_ghost_hunt_timer(syscall_origin, EventTypeWeighted::VirtualAllocEx);
-    }
 
-    /// Handle a VirtualAllocEx signal being received from a remote process.
-    pub fn ghost_hunt_virtual_alloc_ex_add_from_etw(&mut self, signal: VirtualAllocExEtw) {
-        let log = Log::new();
-        let syscall_origin = EVENT_SOURCE_ETW;
-
-        // select the process
-        let pid = signal.pid as u64;
-        let process = if let Some(p) = self.processes.get_mut(&pid) {
-            p
-        } else {
-            log.log(LogLevel::Error, &format!("Could not find pid {pid} from ZwAllocateVirtualMemory signal from {:?}.", syscall_origin));
-            return;
-        };
-        
-        // todo determine different rwx permissions in the future once implemented.
-        process.add_ghost_hunt_timer(syscall_origin, EventTypeWeighted::VirtualAllocEx);
-
+        process.add_ghost_hunt_timer(origin, event_type);
     }
 }
 
 impl ProcessImpl for Process {
     /// Updates the risk score for a given process. The input score argument may be positive or negative
     /// within the bounds of the type; this will alter the score accordingly
-    fn update_process_risk_score(&mut self, score: EventTypeWeighted) {
+    fn update_process_risk_score(&mut self, score: EventTypeWithWeight) {
 
         if self.risk_score.checked_add_signed(score as i16).is_none() {
             // If we overflowed the unsigned int / went below zero, just assign a score of 0
@@ -400,17 +403,16 @@ impl ProcessImpl for Process {
     /// # Args
     /// - `event_origin`: The event origin for where the APi call was intercepted; must be an `EVENT_ORIGIN_` starting constant found in
     /// [`shared_std::processes`]
-    /// -`event_type` The APi called from the weighted [`shared_std::processes::EventTypeWeighted`]
-    fn add_ghost_hunt_timer(&mut self, event_origin: u8, event_type: EventTypeWeighted) {
+    /// -`event_type` The APi called from the weighted [`shared_std::processes::EventTypeWithWeight`]
+    fn add_ghost_hunt_timer(&mut self, event_origin: u8, event_type: EventTypeWithWeight) {
 
         // Get information on what API's are able to cancel out the ghost timers.
         let cancellable_by = find_cancellable_apis_ghost_hunting(&event_type);
 
         // If the timers are empty; then its the first in so we can add it to the list straight up.
-        // Else, we will look for a match on the type.
         if self.ghost_hunting_timers.is_empty() {
             let timer = {
-                let mut t = GhostHuntingTimers {
+                let mut timer = GhostHuntingTimer {
                     timer: SystemTime::now(),
                     event_type: event_type.clone(),
                     origin: event_origin,
@@ -418,45 +420,47 @@ impl ProcessImpl for Process {
                 };
     
                 // remove the current notification from the cancellable by (prevent dangling timers)
-                remove_specific_cancellable_event(&mut t, event_origin);
+                unset_event_flag_in_timer(&mut timer, event_origin);
     
-                t
+                timer
             };
 
             self.ghost_hunting_timers.push(timer);
-        } else {
-            let mut index: usize = 0;
-            for timer in &mut self.ghost_hunting_timers {
-                // If the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
-                // Part of the core Ghost Hunting logic
-                remove_specific_cancellable_event(timer, event_origin);
 
+            return;
+        }
+
+        // Otherwise, there is data in the ghost hunting timers ... 
+        for (index, timer) in self.ghost_hunting_timers.iter_mut().enumerate() {
+            // If the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
+            // Part of the core Ghost Hunting logic
+            if timer.event_type == event_type {
+                unset_event_flag_in_timer(timer, event_origin);
+    
                 // If everything is cancelled out (aka all bit fields set to 0 remove the timer completely from the process)
                 if timer.cancellable_by == 0 {
                     self.ghost_hunting_timers.remove(index);
                     return;
                 }
-
-                index += 1;
             }
-
-            // we did not match, so add the element 
-            let timer = {
-                let mut t = GhostHuntingTimers {
-                    timer: SystemTime::now(),
-                    event_type: event_type.clone(),
-                    origin: event_origin,
-                    cancellable_by,
-                };
-    
-                // remove the current notification from the cancellable by (prevent dangling timers)
-                remove_specific_cancellable_event(&mut t, event_origin);
-    
-                t
-            };
-            self.ghost_hunting_timers.push(timer);
-            
         }
+
+        // we did not match on the above timer.event_type in the list of active timers, so add the element as a new timer
+        let timer = {
+            let mut t = GhostHuntingTimer {
+                timer: SystemTime::now(),
+                event_type: event_type.clone(),
+                origin: event_origin,
+                cancellable_by,
+            };
+
+            // remove the current notification from the cancellable by (prevent dangling timers)
+            unset_event_flag_in_timer(&mut t, event_origin);
+
+            t
+        };
+        self.ghost_hunting_timers.push(timer);
+            
     }
 }
 
@@ -468,7 +472,7 @@ impl ProcessImpl for Process {
 /// - `timer`: A mutable reference to the GhostHuntingTimer for a given process
 /// - `event_origin`: The event origin for where the APi call was intercepted; must be an `EVENT_ORIGIN_` starting constant found in
 /// [`shared_std::processes`]
-fn remove_specific_cancellable_event(timer: &mut GhostHuntingTimers, event_origin: u8) {
+fn unset_event_flag_in_timer(timer: &mut GhostHuntingTimer, event_origin: u8) {
     timer.cancellable_by = timer.cancellable_by as u8 ^ event_origin; // flip the set bit back to a 0
 }
 
@@ -673,16 +677,20 @@ fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     Ok(())
 }
 
-fn find_cancellable_apis_ghost_hunting(syscall_type: &EventTypeWeighted) -> u8 {
+/// Determines which API's can cancel out event signals
+fn find_cancellable_apis_ghost_hunting(syscall_type: &EventTypeWithWeight) -> u8 {
     let bits: u8 = match syscall_type {
-        EventTypeWeighted::OpenProcess => {
+        EventTypeWithWeight::OpenProcess => {
             EVENT_SOURCE_KERNEL | EVENT_SOURCE_SYSCALL_HOOK
         },
-        EventTypeWeighted::VirtualAllocEx => {
+        EventTypeWithWeight::VirtualAllocEx => {
             EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK
         },
-        EventTypeWeighted::CreateRemoteThread => {
-            todo!()
+        EventTypeWithWeight::CreateRemoteThread => {
+            EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK | EVENT_SOURCE_KERNEL
+        },
+        EventTypeWithWeight::WriteVirtualMemory => {
+            EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK
         },
     };
 

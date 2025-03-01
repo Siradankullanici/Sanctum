@@ -1,8 +1,8 @@
 //! Stubs that act as callback functions from syscalls.
 
 use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall};
-use windows::{core::{s, PCSTR}, Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall, WriteVirtualMemoryData};
+use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
 use crate::ipc::send_syscall_info_ipc;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
@@ -117,7 +117,7 @@ unsafe extern "system" fn virtual_alloc_ex(
 
 #[unsafe(no_mangle)]
 unsafe extern "system" fn nt_write_virtual_memory(
-    handle: *mut c_void,
+    handle: HANDLE,
     base_address: *mut c_void,
     buffer: *mut c_void,
     buf_len: u32,
@@ -125,10 +125,22 @@ unsafe extern "system" fn nt_write_virtual_memory(
 ) {
     // http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FMemory%20Management%2FVirtual%20Memory%2FNtWriteVirtualMemory.html
 
-    let print_str = format!("H: {:p}, base: {:p}", handle, base_address);
-    unsafe { MessageBoxA(None, PCSTR::from_raw(print_str.as_ptr()), PCSTR::from_raw(print_str.as_ptr()), MB_OK) };
+    let pid = unsafe { GetCurrentProcessId() };
+    let remote_pid = unsafe { GetProcessId(handle) };
+    let base_addr_as_usize = base_address as usize;
+    let buf_len_as_usize = buf_len as usize;
 
-    unsafe {
-        asm!("int3");
-    }
+    // todo inspect buffer for signature of malware
+    // todo inspect buffer  for magic bytes + dos header, etc
+
+    send_syscall_info_ipc(Syscall::WriteVirtualMemory(
+        SyscallData { 
+            inner: WriteVirtualMemoryData {
+                pid,
+                target_pid: remote_pid,
+                base_address: base_addr_as_usize,
+                buf_len: buf_len_as_usize,
+            }
+        }
+    ));
 }

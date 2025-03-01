@@ -48,8 +48,6 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
     let stub_addresses = StubAddresses::new();
 
     patch_ntdll(&stub_addresses);
-    unsafe { MessageBoxA(None, s!("break"), s!("break"), MB_OK) };
-
 
     resume_all_threads(suspended_handles);
 
@@ -259,7 +257,6 @@ fn patch_ntdll(addresses: &StubAddresses) {
     if let Err(e) = unsafe { FlushInstructionCache(h_process, None, 0) } {
         panic!("[-] Could not flush instruction cache. {e}"); // todo should not panic
     }
-
 }
 
 /// Suspend all threads in the current process except for the thread executing our EDR setup (i.e. the current thread)
