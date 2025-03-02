@@ -34,25 +34,19 @@ struct NtdllIntegrity {
 
 impl NtdllIntegrity {
     fn new() -> Self {
+        // `module` will contain the base address of the DLL
         let module = unsafe { GetModuleHandleA(s!("ntdll.dll")) }.expect("[-] Could not get a handle to NTDLL");
     
-        let mut module_info = MODULEINFO::default();
-        let sz = size_of_val(&module_info);
-        if let Err(e) = unsafe { GetModuleInformation(GetCurrentProcess(), module, &mut module_info, sz as _) } {
-            panic!("[-] Could not get module info for process. {e}");
-        }
-
         //
-        // Resolve the address and size of of the .text section which we will be hashing
-        //
-
-        let dos_header = unsafe { std::ptr::read(module_info.lpBaseOfDll as *const IMAGE_DOS_HEADER) };
+        // Resolve the Virtual Address address & size of the .text section 
+        // 
+        let dos_header = unsafe { std::ptr::read(module.0 as *const IMAGE_DOS_HEADER) };
         if dos_header.e_magic != IMAGE_DOS_SIGNATURE {
             panic!("[-] Bytes of NTDLL did not match DOS signature.");
         }
 
         let mut size_of_text_sec: u32 = 0;
-        let headers = unsafe { std::ptr::read(module_info.lpBaseOfDll.add(dos_header.e_lfanew as _) as *const IMAGE_NT_HEADERS64) };
+        let headers = unsafe { std::ptr::read(module.0.add(dos_header.e_lfanew as _) as *const IMAGE_NT_HEADERS64) };
 
         // Get the virtual address of the .text segment
         let base_of_code_offset = headers.OptionalHeader.BaseOfCode as usize;
@@ -60,7 +54,7 @@ impl NtdllIntegrity {
 
         // Look for the .text section to get the size of the section in bytes
         for i in 0..headers.FileHeader.NumberOfSections {
-            let section_header = unsafe { std::ptr::read(module_info.lpBaseOfDll
+            let section_header = unsafe { std::ptr::read(module.0
                 .add(dos_header.e_lfanew as _)
                 .add(size_of_val(&headers))
                 .add(i as usize * size_of::<IMAGE_SECTION_HEADER>()) 
