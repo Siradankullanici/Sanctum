@@ -121,7 +121,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
     base_address: *mut c_void,
     buffer: *mut c_void,
     buf_len: u32,
-    // 5th param not needed for us
+    num_b_written: *mut u32,
 ) {
     // http://undocumented.ntinternals.net/index.html?page=UserMode%2FUndocumented%20Functions%2FMemory%20Management%2FVirtual%20Memory%2FNtWriteVirtualMemory.html
 
@@ -143,4 +143,25 @@ unsafe extern "system" fn nt_write_virtual_memory(
             }
         }
     ));
+
+    // proceed with the syscall
+    let ssn = 0x3a;
+    unsafe {
+        asm!(
+            "sub rsp, 0x30",
+            "mov [rsp + 0x28], {0}",
+            "mov r10, rcx",
+            "syscall",
+            "add rsp, 0x30",
+
+            in(reg) num_b_written,
+            in("rax") ssn,
+            in("rcx") handle.0,
+            in("rdx") base_address,
+            in("r8") buffer,
+            in("r9") buf_len,
+            options(nostack),
+        );
+    }
+
 }
