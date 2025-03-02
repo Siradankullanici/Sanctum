@@ -227,8 +227,6 @@ fn patch_ntdll(addresses: &StubAddresses) {
         // now we can do the writes etc
         let addr = buffer.as_ptr();
         let len = buffer.len();
-
-        println!("buf: {:p}, ntdll: {:X}, len: {}", addr, item.ntdll, len);
         
         unsafe { std::ptr::copy_nonoverlapping(addr, item.ntdll as *mut _, len) };
 

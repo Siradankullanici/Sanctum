@@ -3,7 +3,7 @@
 use std::{ffi::{c_void, CStr}, time::Duration};
 
 use md5::{Digest, Md5};
-use windows::{core::s, Win32::System::{Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER}, LibraryLoader::GetModuleHandleA, ProcessStatus::{GetModuleInformation, MODULEINFO}, SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE}, Threading::GetCurrentProcess}};
+use windows::{core::s, Win32::System::{Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER}, LibraryLoader::GetModuleHandleA, SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE}}};
 
 /// The entrypoint to starting the NTDLL integrity checker. This will spawn a new OS thread which will occasionally monitor the 
 /// integrity of NTDLL to check for changes to the .text segment of NTDLL in memory. Once we have hooked the DLL there should be no 
