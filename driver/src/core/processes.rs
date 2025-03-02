@@ -140,11 +140,6 @@ pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut 
     let desired_access = (*(*oi).Parameters).CreateHandleInformation.DesiredAccess;
     let og_desired_access = (*(*oi).Parameters).CreateHandleInformation.OriginalDesiredAccess;
 
-    
-    // if target_pid != source_pid {
-    //      println!("PEPROCESS: {:?}, target: {}, source: {}, og access: {}, desired: {}", p_target_process, target_pid as u64, source_pid as u64, og_desired_access, desired_access);
-    // }
-
     if target_pid as u64 == 5228 && source_pid as u64 != 9552 {
         println!("[sanctum] [i] Sending PROCESS STARTED INFO {:?}", HandleObtained {
             source_pid: source_pid as u64,

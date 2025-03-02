@@ -33,6 +33,7 @@
         "LPPROC",
         "lpthread",
         "lsass",
+        "MODULEINFO",
         "movabs",
         "NONALERT",
         "nonoverlapping",

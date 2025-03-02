@@ -1,11 +1,13 @@
 #![feature(naked_functions)]
 
-use std::{arch::asm, collections::HashMap, ffi::c_void};
-use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, GetLastError, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::{FlushInstructionCache, WriteProcessMemory}, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use std::{collections::HashMap, ffi::c_void};
+use integrity::start_ntdll_integrity_monitor;
+use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, GetLastError, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::FlushInstructionCache, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use windows::core::s;
 
 mod stubs;
 mod ipc;
+mod integrity;
 
 #[unsafe(no_mangle)]
 #[allow(non_snake_case)]
@@ -37,17 +39,21 @@ unsafe extern "system" fn initialise_injected_dll(_: *mut c_void) -> u32 {
     //
     // The order of setup will be to:
     // 1) Suspend all threads except for this thread.
-    // 2) Perform all modification and patching of the current process.
-    // 3) Resume all threads
+    // 2) Hash NTDLL which also starts the integrity checker in its own thread.
+    // 3) Perform all modification and patching of the current process.
+    // 4) Resume all threads
     //
     
     // suspend the threads
     let suspended_handles= suspend_all_threads();
-    unsafe { MessageBoxA(None, s!("break"), s!("break"), MB_OK) };
-
+    
+    // Get the addresses of what we want to hook
     let stub_addresses = StubAddresses::new();
-
+    
     patch_ntdll(&stub_addresses);
+    
+    // this must be called after the patching and BEFORE the resumption of all threads
+    start_ntdll_integrity_monitor();
 
     resume_all_threads(suspended_handles);
 
