@@ -4,7 +4,7 @@ use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
 use alloc::vec::Vec;
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
+use wdk_sys::{ntddk::{KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, RtlInitUnicodeString}, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _MODE::KernelMode, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS};
 
 use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
 
@@ -35,6 +35,21 @@ pub unsafe extern "C" fn process_create_callback(process: PEPROCESS, pid: HANDLE
         // let mut proc_name: PUNICODE_STRING = null_mut();
         // unsafe { PsLookupProcessByProcessId(pid as *mut _, &mut peprocess) };
         // unsafe { SeLocateProcessImageName(peprocess, &mut proc_name) };
+
+        let mut process_handle: HANDLE = null_mut();
+        let _ = unsafe { ObOpenObjectByPointer(
+            process as *mut _, 
+            0, 
+            null_mut(), 
+            PROCESS_ALL_ACCESS, 
+            *PsProcessType, 
+            KernelMode as _, 
+            &mut process_handle)};
+
+        // Set both bits: EnableReadVmLogging (bit 0) and EnableWriteVmLogging (bit 1)
+        let mut logging_info = ProcessLoggingInformation { flags: 0x03 };
+        let result = unsafe { ZwSetInformationProcess(process_handle, 96, &mut logging_info as *mut _ as *mut _, size_of::<ProcessLoggingInformation>() as _)};
+        println!("RESULT OF ZWSETINFORMATION: {}", result);
 
         // todo if image name is malware, here we need to instruct the DLL to be inserted
 
@@ -140,15 +155,15 @@ pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut 
     let desired_access = (*(*oi).Parameters).CreateHandleInformation.DesiredAccess;
     let og_desired_access = (*(*oi).Parameters).CreateHandleInformation.OriginalDesiredAccess;
 
-    if target_pid as u64 == 5228 && source_pid as u64 != 9552 {
-        println!("[sanctum] [i] Sending PROCESS STARTED INFO {:?}", HandleObtained {
-            source_pid: source_pid as u64,
-            dest_pid: target_pid as u64,
-            rights_desired: og_desired_access,
-            rights_given: desired_access,
-        });
+    // if target_pid as u64 == 5228 && source_pid as u64 != 9552 {
+    //     println!("[sanctum] [i] Sending PROCESS STARTED INFO {:?}", HandleObtained {
+    //         source_pid: source_pid as u64,
+    //         dest_pid: target_pid as u64,
+    //         rights_desired: og_desired_access,
+    //         rights_given: desired_access,
+    //     });
 
-    }
+    // }
 
     if !DRIVER_MESSAGES.load(Ordering::SeqCst).is_null() {
         let obj = unsafe { &mut *DRIVER_MESSAGES.load(Ordering::SeqCst) };
@@ -161,7 +176,21 @@ pub unsafe extern "C" fn pre_process_handle_callback(ctx: *mut c_void, oi: *mut 
     } else {
         println!("[sanctum] [-] Driver messages is null");
     };
-    
+
     OB_PREOP_SUCCESS
 
+}
+
+#[repr(C)]
+pub union ProcessLoggingInformation {
+    pub flags: u32,
+}
+
+extern "system" {
+    fn ZwSetInformationProcess(
+        ProcessHandle: HANDLE,
+        ProcessInformationClass: u32,
+        ProcessInformation: *mut c_void,
+        ProcessInformationLength: u32,
+    ) -> NTSTATUS;
 }

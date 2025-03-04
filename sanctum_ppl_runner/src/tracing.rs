@@ -3,7 +3,7 @@
 use std::{ptr::copy_nonoverlapping, u64};
 
 use shared_std::processes::{EtwData, EtwMessage, VirtualAllocExEtw};
-use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::{GetLastError, ERROR_SUCCESS, MAX_PATH}, System::{Diagnostics::Etw::{CloseTrace, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, StopTraceW, CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_HEADER, EVENT_RECORD, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, TRACE_LEVEL_VERBOSE}, EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, ProcessStatus::GetProcessImageFileNameW, Threading::{OpenProcess, PROCESS_ALL_ACCESS}}}};
+use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::{GetLastError, ERROR_SUCCESS, MAX_PATH, STATUS_SUCCESS}, System::{Diagnostics::Etw::{CloseTrace, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, StopTraceW, TdhGetEventInformation, CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_HEADER, EVENT_RECORD, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, TRACE_EVENT_INFO, TRACE_LEVEL_VERBOSE}, EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, ProcessStatus::GetProcessImageFileNameW, Threading::{OpenProcess, PROCESS_ALL_ACCESS}}}};
 use crate::{ipc::send_etw_info_ipc, logging::{event_log, EventID}};
 
 //
@@ -27,44 +27,44 @@ const KERNEL_THREATINT_TASK_SUSPENDRESUME_PROCESS: u16  = 9;
 const KERNEL_THREATINT_TASK_DRIVER_DEVICE: u16          = 10;
 
 // Keyword masks for ETW:TI 
-const KERNEL_THREATINT_KEYWORD_ALLOCVM_LOCAL: u64                           = 1;
-const KERNEL_THREATINT_KEYWORD_ALLOCVM_LOCAL_KERNEL_CALLER: u64             = 2;
-const KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE: u64                          = 4;
-const KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE_KERNEL_CALLER: u64            = 8;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL: u64                         = 10;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_KERNEL_CALLER: u64           = 20;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE: u64                        = 40;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_KERNEL_CALLER: u64          = 80;
-const KERNEL_THREATINT_KEYWORD_MAPVIEW_LOCAL: u64                           = 100;
-const KERNEL_THREATINT_KEYWORD_MAPVIEW_LOCAL_KERNEL_CALLER: u64             = 200;
-const KERNEL_THREATINT_KEYWORD_MAPVIEW_REMOTE: u64                          = 400;
-const KERNEL_THREATINT_KEYWORD_MAPVIEW_REMOTE_KERNEL_CALLER: u64            = 800;
-const KERNEL_THREATINT_KEYWORD_QUEUEUSERAPC_REMOTE: u64                     = 1000;
-const KERNEL_THREATINT_KEYWORD_QUEUEUSERAPC_REMOTE_KERNEL_CALLER: u64       = 2000;
-const KERNEL_THREATINT_KEYWORD_SETTHREADCONTEXT_REMOTE: u64                 = 4000;
-const KERNEL_THREATINT_KEYWORD_SETTHREADCONTEXT_REMOTE_KERNEL_CALLER: u64   = 8000;
-const KERNEL_THREATINT_KEYWORD_READVM_LOCAL: u64                            = 10000;
-const KERNEL_THREATINT_KEYWORD_READVM_REMOTE: u64                           = 20000;
-const KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL: u64                           = 40000;
-const KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE: u64                          = 80000;
-const KERNEL_THREATINT_KEYWORD_SUSPEND_THREAD: u64                          = 100000;
-const KERNEL_THREATINT_KEYWORD_RESUME_THREAD: u64                           = 200000;
-const KERNEL_THREATINT_KEYWORD_SUSPEND_PROCESS: u64                         = 400000;
-const KERNEL_THREATINT_KEYWORD_RESUME_PROCESS: u64                          = 800000;
-const KERNEL_THREATINT_KEYWORD_FREEZE_PROCESS: u64                          = 1000000;
-const KERNEL_THREATINT_KEYWORD_THAW_PROCESS: u64                            = 2000000;
-const KERNEL_THREATINT_KEYWORD_CONTEXT_PARSE: u64                           = 4000000;
-const KERNEL_THREATINT_KEYWORD_EXECUTION_ADDRESS_VAD_PROBE: u64             = 8000000;
-const KERNEL_THREATINT_KEYWORD_EXECUTION_ADDRESS_MMF_NAME_PROBE: u64        = 10000000;
-const KERNEL_THREATINT_KEYWORD_READWRITEVM_NO_SIGNATURE_RESTRICTION: u64    = 20000000;
-const KERNEL_THREATINT_KEYWORD_DRIVER_EVENTS: u64                           = 40000000;
-const KERNEL_THREATINT_KEYWORD_DEVICE_EVENTS: u64                           = 80000000;
-const KERNEL_THREATINT_KEYWORD_READVM_REMOTE_FILL_VAD: u64                  = 100000000;
-const KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD: u64                 = 200000000;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_FILL_VAD: u64                = 400000000;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_KERNEL_CALLER_FILL_VAD: u64  = 800000000;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_FILL_VAD: u64               = 1000000000;
-const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_KERNEL_CALLER_FILL_VAD: u64 = 2000000000;
+const KERNEL_THREATINT_KEYWORD_ALLOCVM_LOCAL: u64                           = 0x1;
+const KERNEL_THREATINT_KEYWORD_ALLOCVM_LOCAL_KERNEL_CALLER: u64             = 0x2;
+const KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE: u64                          = 0x4;
+const KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE_KERNEL_CALLER: u64            = 0x8;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL: u64                         = 0x10;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_KERNEL_CALLER: u64           = 0x20;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE: u64                        = 0x40;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_KERNEL_CALLER: u64          = 0x80;
+const KERNEL_THREATINT_KEYWORD_MAPVIEW_LOCAL: u64                           = 0x100;
+const KERNEL_THREATINT_KEYWORD_MAPVIEW_LOCAL_KERNEL_CALLER: u64             = 0x200;
+const KERNEL_THREATINT_KEYWORD_MAPVIEW_REMOTE: u64                          = 0x400;
+const KERNEL_THREATINT_KEYWORD_MAPVIEW_REMOTE_KERNEL_CALLER: u64            = 0x800;
+const KERNEL_THREATINT_KEYWORD_QUEUEUSERAPC_REMOTE: u64                     = 0x1000;
+const KERNEL_THREATINT_KEYWORD_QUEUEUSERAPC_REMOTE_KERNEL_CALLER: u64       = 0x2000;
+const KERNEL_THREATINT_KEYWORD_SETTHREADCONTEXT_REMOTE: u64                 = 0x4000;
+const KERNEL_THREATINT_KEYWORD_SETTHREADCONTEXT_REMOTE_KERNEL_CALLER: u64   = 0x8000;
+const KERNEL_THREATINT_KEYWORD_READVM_LOCAL: u64                            = 0x10000;
+const KERNEL_THREATINT_KEYWORD_READVM_REMOTE: u64                           = 0x20000;
+const KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL: u64                           = 0x40000;
+const KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE: u64                          = 0x80000;
+const KERNEL_THREATINT_KEYWORD_SUSPEND_THREAD: u64                          = 0x100000;
+const KERNEL_THREATINT_KEYWORD_RESUME_THREAD: u64                           = 0x200000;
+const KERNEL_THREATINT_KEYWORD_SUSPEND_PROCESS: u64                         = 0x400000;
+const KERNEL_THREATINT_KEYWORD_RESUME_PROCESS: u64                          = 0x800000;
+const KERNEL_THREATINT_KEYWORD_FREEZE_PROCESS: u64                          = 0x1000000;
+const KERNEL_THREATINT_KEYWORD_THAW_PROCESS: u64                            = 0x2000000;
+const KERNEL_THREATINT_KEYWORD_CONTEXT_PARSE: u64                           = 0x4000000;
+const KERNEL_THREATINT_KEYWORD_EXECUTION_ADDRESS_VAD_PROBE: u64             = 0x8000000;
+const KERNEL_THREATINT_KEYWORD_EXECUTION_ADDRESS_MMF_NAME_PROBE: u64        = 0x10000000;
+const KERNEL_THREATINT_KEYWORD_READWRITEVM_NO_SIGNATURE_RESTRICTION: u64    = 0x20000000;
+const KERNEL_THREATINT_KEYWORD_DRIVER_EVENTS: u64                           = 0x40000000;
+const KERNEL_THREATINT_KEYWORD_DEVICE_EVENTS: u64                           = 0x80000000;
+const KERNEL_THREATINT_KEYWORD_READVM_REMOTE_FILL_VAD: u64                  = 0x100000000;
+const KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD: u64                 = 0x200000000;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_FILL_VAD: u64                = 0x400000000;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL_KERNEL_CALLER_FILL_VAD: u64  = 0x800000000;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_FILL_VAD: u64               = 0x1000000000;
+const KERNEL_THREATINT_KEYWORD_PROTECTVM_REMOTE_KERNEL_CALLER_FILL_VAD: u64 = 0x2000000000;
 
 
 //
@@ -225,8 +225,25 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
                     pid,
                 },
             }));
+        } 
+        
+        if keyword & KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL == KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL {
+            event_log(&format!("Mem protect for pid: {}, image: {}. FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}.", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+            // todo
+        } 
+        
+        if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL == KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL {
+            event_log(&format!("Write local for pid: {}, image: {}. FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+            // todo
         }
 
+        if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE {
+            event_log(&format!("Write REMOTE for pid: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+        } 
+        
+        if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD {
+            event_log(&format!("KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+        }
     }
 
 }

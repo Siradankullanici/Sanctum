@@ -372,7 +372,7 @@ impl ProcessMonitor {
         let process = if let Some(p) = self.processes.get_mut(&pid) {
             p
         } else {
-            log.log(LogLevel::Error, &format!("Could not find pid {pid} from ZwAllocateVirtualMemory signal from {:?}.", origin));
+            log.log(LogLevel::Error, &format!("Could not find pid {pid} from {:?} signal from {:?}.", event_type, origin));
             return;
         };
 

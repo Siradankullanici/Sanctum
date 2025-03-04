@@ -82,8 +82,6 @@ impl NtdllIntegrity {
 fn read_ntdll_bytes(ntdll_info: &NtdllIntegrity) -> Vec<u8> {
     // todo would it be more efficient to just hash functions of interest? (is efficiency that important if we are not 
     // blocking the applications main thread / other threads?)
-    // todo given we are an EDR - is `expect` ok? We wouldn't want to have processes running where our EDR is not working, but equally
-    // panicking all processes will lead to a crowdstrike moment making the device unusable and unstable. 
     
     // The position we are indexing into, using the size of the image as a ceiling
     let mut pos = 0;
