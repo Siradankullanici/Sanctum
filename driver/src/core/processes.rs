@@ -48,8 +48,8 @@ pub unsafe extern "C" fn process_create_callback(process: PEPROCESS, pid: HANDLE
 
         // Set both bits: EnableReadVmLogging (bit 0) and EnableWriteVmLogging (bit 1)
         let mut logging_info = ProcessLoggingInformation { flags: 0x03 };
-        let result = unsafe { ZwSetInformationProcess(process_handle, 96, &mut logging_info as *mut _ as *mut _, size_of::<ProcessLoggingInformation>() as _)};
-        println!("RESULT OF ZWSETINFORMATION: {}", result);
+        let result = unsafe { ZwSetInformationProcess(process_handle, 87, &mut logging_info as *mut _ as *mut _, size_of::<ProcessLoggingInformation>() as _)};
+        println!("RESULT OF ZwSetInformationProcess: {}", result);
 
         // todo if image name is malware, here we need to instruct the DLL to be inserted
 
