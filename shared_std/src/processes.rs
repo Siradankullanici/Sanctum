@@ -181,15 +181,7 @@ pub struct EtwData<T: HasPid> {
 /// Wrap an ETW event with an enum so that we can send messages between the process we have hooked and our EDR engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EtwMessage {
-    VirtualAllocEx(EtwData<VirtualAllocExEtw>)
-}
-
-impl EtwMessage {
-    pub fn get_pid(&self) -> u32 {
-        match self {
-            EtwMessage::VirtualAllocEx(etw_data) => etw_data.inner.pid,
-        }
-    }
+    VirtualAllocEx(VirtualAllocExEtw),
 }
 
 /// ETW Telemetry for a process calling VirtualAllocEx

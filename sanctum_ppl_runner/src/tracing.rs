@@ -220,11 +220,7 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
 
         if keyword & KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE == KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE {
             event_log(&format!("Remote memory allocation caught for pid: {}, image: {}. Data: {:?}", pid, process_image, event_header.EventDescriptor), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
-            send_etw_info_ipc(&EtwMessage::VirtualAllocEx(EtwData {
-                inner: VirtualAllocExEtw {
-                    pid,
-                },
-            }));
+            send_etw_info_ipc(&EtwMessage::VirtualAllocEx(VirtualAllocExEtw { pid }));
         } 
         
         if keyword & KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL == KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL {

@@ -99,7 +99,7 @@ impl Core {
                 match etw_notification {
                     EtwMessage::VirtualAllocEx(etw_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(etw_data.inner, EVENT_SOURCE_ETW, EventTypeWithWeight::VirtualAllocEx);
+                        lock.ghost_hunt_add_event(etw_data, EVENT_SOURCE_ETW, EventTypeWithWeight::VirtualAllocEx);
                     },
                 }
             }
