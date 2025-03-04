@@ -240,10 +240,6 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
         if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE {
             event_log(&format!("Write REMOTE for pid: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
         } 
-        
-        if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD {
-            event_log(&format!("KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE_FILL_VAD: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
-        }
     }
 
 }
