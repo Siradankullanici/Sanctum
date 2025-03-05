@@ -89,7 +89,7 @@ impl Core {
                     },
                     shared_std::processes::Syscall::WriteVirtualMemory(write_vm_data) => {
                         let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(write_vm_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::WriteVirtualMemory);
+                        lock.ghost_hunt_add_event(write_vm_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::WriteProcessMemoryRemote);
                     },
                 }
             }
@@ -100,6 +100,10 @@ impl Core {
                     EtwMessage::VirtualAllocEx(etw_data) => {
                         let mut lock = self.process_monitor.write().await;
                         lock.ghost_hunt_add_event(etw_data, EVENT_SOURCE_ETW, EventTypeWithWeight::VirtualAllocEx);
+                    },
+                    EtwMessage::WriteProcessMemoryRemote(etw_data) => {
+                        let mut lock = self.process_monitor.write().await;
+                        lock.ghost_hunt_add_event(etw_data, EVENT_SOURCE_ETW, EventTypeWithWeight::WriteProcessMemoryRemote);
                     },
                 }
             }

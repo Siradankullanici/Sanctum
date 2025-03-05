@@ -161,10 +161,12 @@ impl HasPid for VirtualAllocExSyscall {
 /// as to how much this should affect the risk score.
 #[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub enum EventTypeWithWeight {
+    // todo move these out of an enum, discriminant cannot have the same value twice
     OpenProcess = 20,
     VirtualAllocEx = 50,
     CreateRemoteThread = 60,
-    WriteVirtualMemory = 30,
+    WriteProcessMemoryRemote = 51,
+    WriteProcessMemoryLocal = 30,
 }
 
 
@@ -181,7 +183,10 @@ pub struct EtwData<T: HasPid> {
 /// Wrap an ETW event with an enum so that we can send messages between the process we have hooked and our EDR engine.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum EtwMessage {
+    // todo these have the same inner type, could this be condensed seeing as though we dont take the extra
+    // telemetry from the ETW:TI?
     VirtualAllocEx(VirtualAllocExEtw),
+    WriteProcessMemoryRemote(WriteProcessMemoryEtw),
 }
 
 /// ETW Telemetry for a process calling VirtualAllocEx
@@ -192,6 +197,23 @@ pub struct VirtualAllocExEtw {
 }
 
 impl HasPid for VirtualAllocExEtw {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
+
+    fn print_data(&self) {
+        println!("{:?}", self);
+    }
+}
+
+/// ETW Telemetry for a process calling WriteProcessMemoryEtw
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct WriteProcessMemoryEtw {
+    /// The pid of the process calling WriteProcessMemoryEtw
+    pub pid: u32,
+}
+
+impl HasPid for WriteProcessMemoryEtw {
     fn get_pid(&self) -> u32 {
         self.pid
     }

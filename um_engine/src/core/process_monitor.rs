@@ -689,7 +689,10 @@ fn find_cancellable_apis_ghost_hunting(syscall_type: &EventTypeWithWeight) -> u8
         EventTypeWithWeight::CreateRemoteThread => {
             EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK | EVENT_SOURCE_KERNEL
         },
-        EventTypeWithWeight::WriteVirtualMemory => {
+        EventTypeWithWeight::WriteProcessMemoryRemote => {
+            EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK
+        },
+        EventTypeWithWeight::WriteProcessMemoryLocal => {
             EVENT_SOURCE_ETW | EVENT_SOURCE_SYSCALL_HOOK
         },
     };

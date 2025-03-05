@@ -2,7 +2,7 @@
 
 use std::{ptr::copy_nonoverlapping, u64};
 
-use shared_std::processes::{EtwData, EtwMessage, VirtualAllocExEtw};
+use shared_std::processes::{EtwData, EtwMessage, VirtualAllocExEtw, WriteProcessMemoryEtw};
 use windows::{core::{PCWSTR, PWSTR}, Win32::{Foundation::{GetLastError, ERROR_SUCCESS, MAX_PATH, STATUS_SUCCESS}, System::{Diagnostics::Etw::{CloseTrace, EnableTraceEx2, OpenTraceW, ProcessTrace, StartTraceW, StopTraceW, TdhGetEventInformation, CONTROLTRACE_HANDLE, EVENT_CONTROL_CODE_ENABLE_PROVIDER, EVENT_HEADER, EVENT_RECORD, EVENT_TRACE_LOGFILEW, EVENT_TRACE_PROPERTIES, EVENT_TRACE_REAL_TIME_MODE, PROCESS_TRACE_MODE_EVENT_RECORD, PROCESS_TRACE_MODE_REAL_TIME, TRACE_EVENT_INFO, TRACE_LEVEL_VERBOSE}, EventLog::{EVENTLOG_ERROR_TYPE, EVENTLOG_INFORMATION_TYPE, EVENTLOG_SUCCESS}, ProcessStatus::GetProcessImageFileNameW, Threading::{OpenProcess, PROCESS_ALL_ACCESS}}}};
 use crate::{ipc::send_etw_info_ipc, logging::{event_log, EventID}};
 
@@ -234,8 +234,9 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
         }
 
         if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE {
-            event_log(&format!("Write REMOTE for pid: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
-        } 
+            send_etw_info_ipc(&EtwMessage::WriteProcessMemoryRemote(WriteProcessMemoryEtw { pid }));
+            event_log(&format!("Write remote memory for pid: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
+        }
     }
 
 }
