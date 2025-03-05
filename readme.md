@@ -4,6 +4,8 @@
 
 This project is a Windows Driver written in Rust.
 
+You can find some demos on my [YouTube channel](https://www.youtube.com/@FluxSec) of the EDR.
+
 Sanctum EDR is an Endpoint Detection and Response proof-of-concept product I am building, that I will use to try combat modern malware techniques that I develop.
 
 I have started a blog series on Sanctum, you can check it out [on my blog here](https://fluxsec.red/sanctum-edr-intro). I'm keeping track of the progress and milestones of the project there, so please check that out!
@@ -56,7 +58,7 @@ The EDR `um_engine` will inject a DLL into processes for internal  monitoring of
 
 ## EDR DLL syscall hooking
 
-The EDR injected DLL hooks syscalls; currently only `ZwOpenProcess` and redirects control to a function contained within the DLL for inspection.
+The EDR injected DLL hooks syscalls and redirects control to a function contained within the DLL for inspection.
 Via IPC, the DLL sends a message to the engine notifying it of the event, which then leads to my [Ghost Hunting](https://fluxsec.red/edr-syscall-hooking) 
 technique. 
 
