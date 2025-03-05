@@ -118,6 +118,7 @@ fn periodically_check_ntdll_hash(ntdll: NtdllIntegrity) -> ! {
         
         let hash = hash_ntdll_text_segment(&ntdll);
         if hash != ntdll.hash {
+            // todo - inform EDR of badness!
             println!("HASH CHANGE DETECTED. Old: {}, New: {}", ntdll.hash, hash);
         }
 

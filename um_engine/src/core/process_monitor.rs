@@ -9,7 +9,7 @@ use crate::utils::{env::get_logged_in_username, log::{Log, LogLevel}};
 /// The max wait time from events coming from an injected Sanctum DLL & from the driver hooks
 const MAX_WAIT: Duration = Duration::from_millis(600);
 /// The ETW max wait time needs extending, as this takes a little longer to come through
-const MAX_WAIT_ETW: Duration = Duration::from_millis(2300); // 3 seconds - this is quite long, but alas
+const MAX_WAIT_ETW: Duration = Duration::from_millis(2700); // 3 seconds - this is quite long, but alas
 
 // Allow an impl block in this module, as opposed to implementing it outside of here; seeing as the impl is likely not required outside the 
 // engine. If it needs to be, then the impl will be moved to the shared crate.
@@ -301,7 +301,6 @@ impl ProcessMonitor {
             if process.ghost_hunting_timers.is_empty() {
                 continue;
             }
-            println!("Timers: {:?}", process.ghost_hunting_timers);
             
             //
             // In here process each API event we are tracking in the ghost timers.

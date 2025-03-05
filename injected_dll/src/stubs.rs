@@ -2,7 +2,7 @@
 
 use std::{arch::asm, ffi::c_void};
 use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall, WriteVirtualMemoryData};
-use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
+use windows::{core::PSTR, Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use crate::ipc::send_syscall_info_ipc;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
@@ -164,4 +164,37 @@ unsafe extern "system" fn nt_write_virtual_memory(
         );
     }
 
+}
+
+pub fn nt_protect_virtual_memory(
+    handle: HANDLE,
+    base_address: *const usize,
+    bytes_to_protect: *const u32,
+    new_access_protect: u32,
+    old_protect: *const usize,
+) {
+    // let s = format!("H: {:p}, base ptr: {:p}", handle.0 as *const c_void, base_address as *const c_void);
+    // unsafe { MessageBoxA(None, PSTR::from_raw(s.as_ptr() as *mut _), PSTR::from_raw(s.as_ptr() as *mut _), MB_OK)};
+
+    // todo process args and send to engine
+
+    // proceed with the syscall
+    let ssn = 0x50;
+    unsafe {
+        asm!(
+            "sub rsp, 0x30",
+            "mov [rsp + 0x28], {0}",
+            "mov r10, rcx",
+            "syscall",
+            "add rsp, 0x30",
+
+            in(reg) old_protect,
+            in("rax") ssn,
+            in("rcx") handle.0,
+            in("rdx") base_address,
+            in("r8") bytes_to_protect,
+            in("r9") new_access_protect,
+            options(nostack),
+        );
+    }
 }

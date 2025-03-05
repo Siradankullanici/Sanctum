@@ -2,6 +2,7 @@
 
 use std::{collections::HashMap, ffi::c_void};
 use integrity::start_ntdll_integrity_monitor;
+use stubs::nt_protect_virtual_memory;
 use windows::{core::PCSTR, Win32::{Foundation::{CloseHandle, GetLastError, HANDLE, STATUS_SUCCESS}, System::{Diagnostics::{Debug::FlushInstructionCache, ToolHelp::{CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD, THREADENTRY32}}, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS}, SystemServices::*, Threading::{CreateThread, GetCurrentProcess, GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread, THREAD_CREATION_FLAGS, THREAD_SUSPEND_RESUME}}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
 use windows::core::s;
 
@@ -126,6 +127,11 @@ impl<'a> StubAddresses<'a> {
             Some(address) => address as *const (),
         } as usize;
 
+        // NtProtectVirtualMemory
+        let nt_protect_virtual_memory = nt_protect_virtual_memory as usize;
+        let x = format!("NTPVM: {:p}", nt_protect_virtual_memory as *const c_void);
+        unsafe { MessageBoxA(None, PCSTR::from_raw(x.as_ptr() as *mut _), PCSTR::from_raw(x.as_ptr() as *mut _), MB_OK) };
+
 
         //
         // Get function pointers to the functions we wish to hook
@@ -161,6 +167,17 @@ impl<'a> StubAddresses<'a> {
             Some(address) => address as *const (),
         } as usize;
 
+        // NtProtectVirtualMemory
+        let ntpvm = unsafe { GetProcAddress(h_ntdll, s!("NtProtectVirtualMemory")) };
+        let ntpvm = match ntpvm {
+            None => {
+                unsafe { MessageBoxA(None, s!("Could not get fn addr NtProtectVirtualMemory"), s!("Could not get fn addr NtProtectVirtualMemory"), MB_OK) };
+                panic!("Oh no :("); // todo dont panic a process?
+            },
+            Some(address) => address as *const (),
+        } as usize;
+        
+
 
         //
         // Insert into the hashmap tracking the address resolutions
@@ -178,7 +195,10 @@ impl<'a> StubAddresses<'a> {
             edr: nt_write_virtual_memory,
             ntdll: zwvm,
         });
-        
+        hm.insert("NtProtectVirtualMemory", Addresses {
+            edr: nt_protect_virtual_memory,
+            ntdll: ntpvm,
+        });
 
         Self {
             addresses: hm,
