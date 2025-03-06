@@ -173,9 +173,6 @@ pub fn nt_protect_virtual_memory(
     new_access_protect: u32,
     old_protect: *const usize,
 ) {
-    // let s = format!("H: {:p}, base ptr: {:p}", handle.0 as *const c_void, base_address as *const c_void);
-    // unsafe { MessageBoxA(None, PSTR::from_raw(s.as_ptr() as *mut _), PSTR::from_raw(s.as_ptr() as *mut _), MB_OK)};
-
     // todo process args and send to engine
 
     // proceed with the syscall

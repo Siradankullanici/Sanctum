@@ -1,5 +1,4 @@
-use std::{fmt::Display, time::SystemTime};
-
+use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 
@@ -14,12 +13,19 @@ use serde::{Deserialize, Serialize};
 // only able to be caught by ETW and the syscall hook.
 //
 
-/// The event source came from the kernel, intercepted by the driver
-pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
-/// The event source came from a syscall hook
-pub const EVENT_SOURCE_SYSCALL_HOOK: u8  = 0b0010;
-/// The event source came from the PPL Service receiving ETW:TI
-pub const EVENT_SOURCE_ETW: u8           = 0b0100;
+// /// The event source came from the kernel, intercepted by the driver
+// pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
+// /// The event source came from a syscall hook
+// pub const EVENT_SOURCE_SYSCALL_HOOK: u8  = 0b0010;
+// /// The event source came from the PPL Service receiving ETW:TI
+// pub const EVENT_SOURCE_ETW: u8           = 0b0100;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum SyscallEventSource {
+    EventSourceKernel = 0x1,
+    EventSourceSyscallHook = 0x2,
+    EventSourceEtw = 0x4,
+}
 
 
 /****************************** GENERAL *******************************/
@@ -47,7 +53,7 @@ pub struct Process {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GhostHuntingTimer {
     pub timer: SystemTime,
-    pub event_type: EventTypeWithWeight,
+    pub event_type: NtFunction,
     /// todo update docs
     pub origin: u8,
     /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
@@ -69,28 +75,6 @@ pub trait HasPid {
 #[serde(transparent)]
 pub struct SyscallData<T: HasPid> {
     pub inner: T,
-}
-
-/// Wrap a syscall message with an enum so that we can send messages between the process we have hooked and our EDR engine.
-/// 
-/// # Note
-/// Each struct within the Syscall enum **MUST** contain the pid which it came from; which is required to ensure the integrity 
-/// of the Ghost Hunting process. This is enforced via the HasPid trait.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Syscall {
-    OpenProcess(SyscallData<OpenProcessData>),
-    VirtualAllocEx(SyscallData<VirtualAllocExSyscall>),
-    WriteVirtualMemory(SyscallData<WriteVirtualMemoryData>),
-}
-
-impl Syscall {
-    pub fn get_pid(&self) -> u32 {
-        match self {
-            Syscall::OpenProcess(syscall_data) => syscall_data.inner.pid,
-            Syscall::VirtualAllocEx(syscall_data) => syscall_data.inner.pid,
-            Syscall::WriteVirtualMemory(syscall_data) => syscall_data.inner.pid,
-        }
-    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -127,47 +111,6 @@ impl HasPid for WriteVirtualMemoryData {
     }
 }
 
-/// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemory
-/// is called by a process.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAllocExSyscall {
-    /// The base address is the base of the remote process which is stored as a usize but is actually a hex
-    /// address and will need converting if using as an address.
-    pub base_address: usize,
-    /// THe size of the allocated memory
-    pub region_size: usize,
-    /// A bitmask containing flags that specify the type of allocation to be performed. 
-    pub allocation_type: u32,
-    /// A bitmask containing page protection flags that specify the protection desired for the committed 
-    /// region of pages.
-    pub protect: u32,
-    /// The pid in which the allocation is taking place in
-    pub remote_pid: u32,
-    /// The pid of the process calling VirtualAllocEx
-    pub pid: u32,
-}
-
-impl HasPid for VirtualAllocExSyscall {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-/// Define the different event types that we are monitoring. Each event contains an associated weight 
-/// as to how much this should affect the risk score.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum EventTypeWithWeight {
-    // todo move these out of an enum, discriminant cannot have the same value twice
-    OpenProcess = 20,
-    VirtualAllocEx = 50,
-    CreateRemoteThread = 60,
-    WriteProcessMemoryRemote = 51,
-    WriteProcessMemoryLocal = 30,
-}
 
 
 /*****************************************************************************/
@@ -214,6 +157,75 @@ pub struct WriteProcessMemoryEtw {
 }
 
 impl HasPid for WriteProcessMemoryEtw {
+    fn get_pid(&self) -> u32 {
+        self.pid
+    }
+
+    fn print_data(&self) {
+        println!("{:?}", self);
+    }
+}
+
+
+/****************************** SYSCALLS *******************************/
+
+
+/// Information relating to a syscall event which happened on the device. This struct holds:
+/// 
+/// - `data`: This field is generic over T which must implement the `HasPid` trait. This field contains the metadata associated
+/// with the syscall.
+/// - `source`: Where the system event was captured, e.g. a hooked syscall, ETW, or the driver.
+/// - `evasion_weight`: The weight associated with the event if EDR evasion is detected.
+/// - todo: `event_weight` for general weighting if this occurs, same as the normal weight i guess?
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(bound(
+    serialize = "T: Serialize",
+    deserialize = "T: for<'a> Deserialize<'a>"
+))]
+pub struct SyscallEvent<T> 
+where T: HasPid + Serialize + for<'a> Deserialize<'a> {
+    nt_function: NtFunction,
+    data: T,
+    source: SyscallEventSource,
+    evasion_weight: u8,
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NtFunction {
+    NtOpenProcess,
+    NtWriteVirtualMemory,
+    NtAllocateVirtualMemory,
+}
+
+
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtAllocateVirtualMemory {
+    /// The pid of the process making the syscall
+    pub pid: u32,
+    /// The metadata associated with the syscall
+    pub metadata: Option<NtAllocateVirtualMemoryMetadata>,
+}
+
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtAllocateVirtualMemoryMetadata {
+    /// The base address is the base of the remote process which is stored as a usize but is actually a hex
+    /// address and will need converting if using as an address.
+    pub base_address: usize,
+    /// THe size of the allocated memory
+    pub region_size: usize,
+    /// A bitmask containing flags that specify the type of allocation to be performed. 
+    pub allocation_type: u32,
+    /// A bitmask containing page protection flags that specify the protection desired for the committed 
+    /// region of pages.
+    pub protect: u32,
+    /// The pid in which the allocation is taking place in
+    pub remote_pid: u32,
+}
+
+impl HasPid for NtAllocateVirtualMemory {
     fn get_pid(&self) -> u32 {
         self.pid
     }
