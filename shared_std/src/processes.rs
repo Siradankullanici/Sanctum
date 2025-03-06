@@ -2,24 +2,11 @@ use std::time::SystemTime;
 use serde::{Deserialize, Serialize};
 
 
-/****************************** CONSTANT *******************************/
-
-//
-// The below constants are bitfields which are a design decision over using an enum. The logic of the `um_engine::core::core` 
-// uses the bit fields as a mask to determine which event types (kernel, syscall hook, etw etc) are required to fully cancel
-// out the ghost hunt timers.
-//
-// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
-// only able to be caught by ETW and the syscall hook.
-//
-
-// /// The event source came from the kernel, intercepted by the driver
-// pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
-// /// The event source came from a syscall hook
-// pub const EVENT_SOURCE_SYSCALL_HOOK: u8  = 0b0010;
-// /// The event source came from the PPL Service receiving ETW:TI
-// pub const EVENT_SOURCE_ETW: u8           = 0b0100;
-
+/// Bitfields which act as a mask to determine which event types (kernel, syscall hook, etw etc) 
+/// are required to fully cancel out the ghost hunt timers.
+///
+/// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
+/// only able to be caught by ETW and the syscall hook.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum SyscallEventSource {
     EventSourceKernel = 0x1,
@@ -62,110 +49,6 @@ pub struct GhostHuntingTimer {
     pub cancellable_by: u8,
 }
 
-pub trait HasPid {
-    fn get_pid(&self) -> u32;
-    fn print_data(&self);
-}
-
-/*****************************************************************************/
-/***                         EVENTS FROM SYSCALL HOOK                        */
-/*****************************************************************************/
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SyscallData<T: HasPid> {
-    pub inner: T,
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenProcessData {
-    pub pid: u32,
-    pub target_pid: u32,
-}
-
-impl HasPid for OpenProcessData {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-    
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WriteVirtualMemoryData {
-    pub pid: u32,
-    pub target_pid: u32,
-    pub base_address: usize,
-    pub buf_len: usize,
-}
-
-impl HasPid for WriteVirtualMemoryData {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-
-
-/*****************************************************************************/
-/***                                ETW EVENTS                                */
-/*****************************************************************************/
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EtwData<T: HasPid> {
-    pub inner: T,
-}
-
-/// Wrap an ETW event with an enum so that we can send messages between the process we have hooked and our EDR engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EtwMessage {
-    // todo these have the same inner type, could this be condensed seeing as though we dont take the extra
-    // telemetry from the ETW:TI?
-    VirtualAllocEx(VirtualAllocExEtw),
-    WriteProcessMemoryRemote(WriteProcessMemoryEtw),
-}
-
-/// ETW Telemetry for a process calling VirtualAllocEx
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAllocExEtw {
-    /// The pid of the process calling VirtualAllocEx
-    pub pid: u32,
-}
-
-impl HasPid for VirtualAllocExEtw {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-/// ETW Telemetry for a process calling WriteProcessMemoryEtw
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WriteProcessMemoryEtw {
-    /// The pid of the process calling WriteProcessMemoryEtw
-    pub pid: u32,
-}
-
-impl HasPid for WriteProcessMemoryEtw {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
 
 /****************************** SYSCALLS *******************************/
 
@@ -182,15 +65,16 @@ impl HasPid for WriteProcessMemoryEtw {
     serialize = "T: Serialize",
     deserialize = "T: for<'a> Deserialize<'a>"
 ))]
-pub struct SyscallEvent<T> 
-where T: HasPid + Serialize + for<'a> Deserialize<'a> {
-    nt_function: NtFunction,
-    data: T,
-    source: SyscallEventSource,
-    evasion_weight: u8,
+pub struct Syscall<T> 
+where T: Serialize + for<'a> Deserialize<'a> {
+    pub nt_function: NtFunction,
+    pub pid: u32,
+    pub data: Option<T>,
+    pub source: SyscallEventSource,
+    pub evasion_weight: i16,
 }
 
-
+/// todo docs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NtFunction {
     NtOpenProcess,
@@ -198,19 +82,23 @@ pub enum NtFunction {
     NtAllocateVirtualMemory,
 }
 
-
 /// todo docs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtAllocateVirtualMemory {
-    /// The pid of the process making the syscall
-    pub pid: u32,
-    /// The metadata associated with the syscall
-    pub metadata: Option<NtAllocateVirtualMemoryMetadata>,
+pub struct NtOpenProcess {
+    pub target_pid: u32,
 }
 
 /// todo docs
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtAllocateVirtualMemoryMetadata {
+pub struct NtWriteVirtualMemory {
+    pub target_pid: u32,
+    pub base_address: usize,
+    pub buf_len: usize,
+}
+
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NtAllocateVirtualMemory {
     /// The base address is the base of the remote process which is stored as a usize but is actually a hex
     /// address and will need converting if using as an address.
     pub base_address: usize,
@@ -225,12 +113,18 @@ pub struct NtAllocateVirtualMemoryMetadata {
     pub remote_pid: u32,
 }
 
-impl HasPid for NtAllocateVirtualMemory {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
+impl<T> Syscall<T> 
+where T: Serialize + for<'a> Deserialize<'a> {
+    /// Creates a new Syscall data packet where the source is from the ETW module
+    pub fn new_etw(pid: u32, nt_function: NtFunction, evasion_weight: i16) -> Self {
+        Self {
+            nt_function,
+            pid,
+            data: None,
+            source: SyscallEventSource::EventSourceEtw,
+            evasion_weight,
+        }
     }
 }
+
+unsafe impl<T> Send for Syscall<T> where T: Serialize + for<'a> Deserialize<'a>{}

@@ -1,17 +1,18 @@
 //! Consume IPC messages from the Events Tracing for Windows consumer.
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
+use serde::{Deserialize, Serialize};
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_ETW, processes::EtwMessage};
+use shared_std::{constants::PIPE_FOR_ETW, processes::Syscall};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
 use crate::{engine::PPL_SERVICE_PID, utils::{log::{Log, LogLevel}, security::create_security_attributes}};
 
 /// Starts the IPC server for the ETW running from PPL
-pub async fn run_ipc_for_etw(
-    tx: Sender<EtwMessage>
-) {
-    // Store the pointer in the atomic so we can safely access it across 
+pub async fn run_ipc_for_etw<T>(
+    tx: Sender<Syscall<T>>
+) where T: Serialize + for<'a> Deserialize<'a> + Send + 'static {
+        // Store the pointer in the atomic so we can safely access it across 
     let mut sec_attr = create_security_attributes();
 
     // SAFETY: Null pointer checked at start of function
@@ -34,7 +35,7 @@ pub async fn run_ipc_for_etw(
             
             // SAFETY: null pointer checked above
             server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for ETW pipe listener") };
-            let tx_cl: Arc<Sender<EtwMessage>> = Arc::clone(&tx_arc);
+            let tx_cl: Arc<Sender<Syscall<T>>> = Arc::clone(&tx_arc);
             
             //
             // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
@@ -51,7 +52,7 @@ pub async fn run_ipc_for_etw(
                         }
 
                         // deserialise the request
-                        match from_slice::<EtwMessage>(&buffer[..bytes_read]) {
+                        match from_slice::<Syscall<T>>(&buffer[..bytes_read]) {
                             Ok(etw_msg) => {
                                 // check the PID of the transmission is our PPL service so we can detect tempering
                                 let pipe_pid = match get_pid_from_pipe(&connected_client) {

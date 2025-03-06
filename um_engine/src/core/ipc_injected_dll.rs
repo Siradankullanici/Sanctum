@@ -2,6 +2,7 @@
 //! with the engine, and this module provides the functionality for this.
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
+use serde::{Deserialize, Serialize};
 use serde_json::from_slice;
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
@@ -10,9 +11,10 @@ use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProces
 use crate::utils::{log::{Log, LogLevel}, security::create_security_attributes};
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
-pub async fn run_ipc_for_injected_dll(
-    tx: Sender<Syscall>
-) {
+pub async fn run_ipc_for_injected_dll<T>(
+    tx: Sender<Syscall<T>>
+) 
+where T: Serialize + for<'a> Deserialize<'a> + Send + 'static {
     // Store the pointer in the atomic so we can safely access it across 
     let mut sec_attr = create_security_attributes();
 
@@ -37,7 +39,7 @@ pub async fn run_ipc_for_injected_dll(
             let mut sec_attr = create_security_attributes();
             // SAFETY: null pointer checked above
             server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for injected DLL") };
-            let tx_cl: Arc<Sender<Syscall>> = Arc::clone(&tx_arc);
+            let tx_cl: Arc<Sender<Syscall<T>>> = Arc::clone(&tx_arc);
             
             //
             // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
@@ -56,7 +58,7 @@ pub async fn run_ipc_for_injected_dll(
                         let s = String::from_utf8_lossy(&buffer);
 
                         // deserialise the request
-                        match from_slice::<Syscall>(&buffer[..bytes_read]) {
+                        match from_slice::<Syscall<T>>(&buffer[..bytes_read]) {
                             Ok(syscall) => {
 
                                 // 
@@ -76,7 +78,7 @@ pub async fn run_ipc_for_injected_dll(
                                         todo!()
                                     },
                                 };
-                                if pipe_pid != syscall.get_pid() {
+                                if pipe_pid != syscall.pid {
                                     // todo this is bad and should do something
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
