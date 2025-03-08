@@ -1,25 +1,18 @@
-use std::{fmt::Display, time::SystemTime};
-
+use std::{rc::Rc, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
 
-/****************************** CONSTANT *******************************/
-
-//
-// The below constants are bitfields which are a design decision over using an enum. The logic of the `um_engine::core::core` 
-// uses the bit fields as a mask to determine which event types (kernel, syscall hook, etw etc) are required to fully cancel
-// out the ghost hunt timers.
-//
-// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
-// only able to be caught by ETW and the syscall hook.
-//
-
-/// The event source came from the kernel, intercepted by the driver
-pub const EVENT_SOURCE_KERNEL: u8        = 0b0001;
-/// The event source came from a syscall hook
-pub const EVENT_SOURCE_SYSCALL_HOOK: u8  = 0b0010;
-/// The event source came from the PPL Service receiving ETW:TI
-pub const EVENT_SOURCE_ETW: u8           = 0b0100;
+/// Bitfields which act as a mask to determine which event types (kernel, syscall hook, etw etc) 
+/// are required to fully cancel out the ghost hunt timers.
+///
+/// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
+/// only able to be caught by ETW and the syscall hook.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
+pub enum SyscallEventSource {
+    EventSourceKernel = 0x1,
+    EventSourceSyscallHook = 0x2,
+    EventSourceEtw = 0x4,
+}
 
 
 /****************************** GENERAL *******************************/
@@ -47,90 +40,60 @@ pub struct Process {
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GhostHuntingTimer {
     pub timer: SystemTime,
-    pub event_type: EventTypeWithWeight,
+    pub event_type: NtFunction,
     /// todo update docs
-    pub origin: u8,
+    pub origin: SyscallEventSource,
     /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
     /// sources of telemetry, we cannot do a 1:1 cancellation process.
     /// todo update docs
-    pub cancellable_by: u8,
+    pub cancellable_by: isize,
+    pub weight: i16,
 }
 
-pub trait HasPid {
-    fn get_pid(&self) -> u32;
-    fn print_data(&self);
-}
 
-/*****************************************************************************/
-/***                         EVENTS FROM SYSCALL HOOK                        */
-/*****************************************************************************/
+/****************************** SYSCALLS *******************************/
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(transparent)]
-pub struct SyscallData<T: HasPid> {
-    pub inner: T,
-}
 
-/// Wrap a syscall message with an enum so that we can send messages between the process we have hooked and our EDR engine.
+/// Information relating to a syscall event which happened on the device. This struct holds:
 /// 
-/// # Note
-/// Each struct within the Syscall enum **MUST** contain the pid which it came from; which is required to ensure the integrity 
-/// of the Ghost Hunting process. This is enforced via the HasPid trait.
+/// - `data`: This field is generic over T which must implement the `HasPid` trait. This field contains the metadata associated
+/// with the syscall.
+/// - `source`: Where the system event was captured, e.g. a hooked syscall, ETW, or the driver.
+/// - `evasion_weight`: The weight associated with the event if EDR evasion is detected.
+/// - todo: `event_weight` for general weighting if this occurs, same as the normal weight i guess?
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum Syscall {
-    OpenProcess(SyscallData<OpenProcessData>),
-    VirtualAllocEx(SyscallData<VirtualAllocExSyscall>),
-    WriteVirtualMemory(SyscallData<WriteVirtualMemoryData>),
-}
-
-impl Syscall {
-    pub fn get_pid(&self) -> u32 {
-        match self {
-            Syscall::OpenProcess(syscall_data) => syscall_data.inner.pid,
-            Syscall::VirtualAllocEx(syscall_data) => syscall_data.inner.pid,
-            Syscall::WriteVirtualMemory(syscall_data) => syscall_data.inner.pid,
-        }
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct OpenProcessData {
+pub struct Syscall {
+    pub nt_function: NtFunction,
     pub pid: u32,
+    pub source: SyscallEventSource,
+    pub evasion_weight: i16,
+}
+
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub enum NtFunction {
+    NtOpenProcess(Option<NtOpenProcessData>),
+    NtWriteVirtualMemory(Option<NtWriteVirtualMemoryData>),
+    NtAllocateVirtualMemory(Option<NtAllocateVirtualMemory>),
+}
+
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct NtOpenProcessData {
     pub target_pid: u32,
 }
 
-impl HasPid for OpenProcessData {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-    
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WriteVirtualMemoryData {
-    pub pid: u32,
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct NtWriteVirtualMemoryData {
     pub target_pid: u32,
     pub base_address: usize,
     pub buf_len: usize,
 }
 
-impl HasPid for WriteVirtualMemoryData {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-/// Data relating to arguments / local environment information when the hooked syscall ZwAllocateVirtualMemory
-/// is called by a process.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAllocExSyscall {
+/// todo docs
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct NtAllocateVirtualMemory {
     /// The base address is the base of the remote process which is stored as a usize but is actually a hex
     /// address and will need converting if using as an address.
     pub base_address: usize,
@@ -143,82 +106,18 @@ pub struct VirtualAllocExSyscall {
     pub protect: u32,
     /// The pid in which the allocation is taking place in
     pub remote_pid: u32,
-    /// The pid of the process calling VirtualAllocEx
-    pub pid: u32,
 }
 
-impl HasPid for VirtualAllocExSyscall {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
-
-/// Define the different event types that we are monitoring. Each event contains an associated weight 
-/// as to how much this should affect the risk score.
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub enum EventTypeWithWeight {
-    // todo move these out of an enum, discriminant cannot have the same value twice
-    OpenProcess = 20,
-    VirtualAllocEx = 50,
-    CreateRemoteThread = 60,
-    WriteProcessMemoryRemote = 51,
-    WriteProcessMemoryLocal = 30,
-}
-
-
-/*****************************************************************************/
-/***                                ETW EVENTS                                */
-/*****************************************************************************/
-
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct EtwData<T: HasPid> {
-    pub inner: T,
-}
-
-/// Wrap an ETW event with an enum so that we can send messages between the process we have hooked and our EDR engine.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum EtwMessage {
-    // todo these have the same inner type, could this be condensed seeing as though we dont take the extra
-    // telemetry from the ETW:TI?
-    VirtualAllocEx(VirtualAllocExEtw),
-    WriteProcessMemoryRemote(WriteProcessMemoryEtw),
-}
-
-/// ETW Telemetry for a process calling VirtualAllocEx
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct VirtualAllocExEtw {
-    /// The pid of the process calling VirtualAllocEx
-    pub pid: u32,
-}
-
-impl HasPid for VirtualAllocExEtw {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
+impl Syscall {
+    /// Creates a new Syscall data packet where the source is from the ETW module
+    pub fn new_etw(pid: u32, nt_function: NtFunction, evasion_weight: i16) -> Self {
+        Self {
+            nt_function,
+            pid,
+            source: SyscallEventSource::EventSourceEtw,
+            evasion_weight,
+        }
     }
 }
 
-/// ETW Telemetry for a process calling WriteProcessMemoryEtw
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct WriteProcessMemoryEtw {
-    /// The pid of the process calling WriteProcessMemoryEtw
-    pub pid: u32,
-}
-
-impl HasPid for WriteProcessMemoryEtw {
-    fn get_pid(&self) -> u32 {
-        self.pid
-    }
-
-    fn print_data(&self) {
-        println!("{:?}", self);
-    }
-}
+unsafe impl Send for Syscall {}

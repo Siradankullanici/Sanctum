@@ -1,8 +1,8 @@
 //! Stubs that act as callback functions from syscalls.
 
 use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{OpenProcessData, Syscall, SyscallData, VirtualAllocExSyscall, WriteVirtualMemoryData};
-use windows::{core::PSTR, Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}, UI::WindowsAndMessaging::{MessageBoxA, MB_OK}}};
+use shared_std::processes::{NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
+use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
 use crate::ipc::send_syscall_info_ipc;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
@@ -18,12 +18,16 @@ unsafe extern "system" fn open_process(
         let target_pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
         let pid = unsafe { GetCurrentProcessId() };
 
-        let data = Syscall::OpenProcess(SyscallData{
-            inner: OpenProcessData {
-                pid,
-                target_pid,
-            },
-        });
+        let data = Syscall {
+            nt_function: NtFunction::NtOpenProcess(
+                Some(NtOpenProcessData {
+                    target_pid,
+                })
+            ),
+            pid,
+            source: SyscallEventSource::EventSourceSyscallHook,
+            evasion_weight: 30,
+        };
 
         // send the telemetry to the engine
         send_syscall_info_ipc(data);
@@ -77,19 +81,23 @@ unsafe extern "system" fn virtual_alloc_ex(
             // SAFETY: Null pointer checked above
             unsafe { *region_size }
         };
-    
-        send_syscall_info_ipc(Syscall::VirtualAllocEx(
-            SyscallData { 
-                inner: VirtualAllocExSyscall {
+
+        let data = Syscall {
+            nt_function: NtFunction::NtAllocateVirtualMemory(
+                Some(NtAllocateVirtualMemory {
                     base_address: base_address as usize,
                     region_size: region_size_checked,
                     allocation_type,
                     protect,
                     remote_pid,
-                    pid,
-                }
-            }
-        ));
+                }),
+            ),
+            pid,
+            source: SyscallEventSource::EventSourceSyscallHook,
+            evasion_weight: 60,
+        };
+    
+        send_syscall_info_ipc(data);
     }
     
     // proceed with the syscall
@@ -133,16 +141,22 @@ unsafe extern "system" fn nt_write_virtual_memory(
     // todo inspect buffer for signature of malware
     // todo inspect buffer  for magic bytes + dos header, etc
 
-    send_syscall_info_ipc(Syscall::WriteVirtualMemory(
-        SyscallData { 
-            inner: WriteVirtualMemoryData {
-                pid,
-                target_pid: remote_pid,
-                base_address: base_addr_as_usize,
-                buf_len: buf_len_as_usize,
-            }
-        }
-    ));
+    let data = Syscall {
+        nt_function: NtFunction::NtWriteVirtualMemory(
+            Some(
+                NtWriteVirtualMemoryData {
+                    target_pid: remote_pid,
+                    base_address: base_addr_as_usize,
+                    buf_len: buf_len_as_usize,
+                }
+            )
+        ),
+        pid,
+        source: SyscallEventSource::EventSourceSyscallHook,
+        evasion_weight: 60,
+    };
+
+    send_syscall_info_ipc(data);
 
     // proceed with the syscall
     let ssn = 0x3a;
@@ -173,9 +187,6 @@ pub fn nt_protect_virtual_memory(
     new_access_protect: u32,
     old_protect: *const usize,
 ) {
-    // let s = format!("H: {:p}, base ptr: {:p}", handle.0 as *const c_void, base_address as *const c_void);
-    // unsafe { MessageBoxA(None, PSTR::from_raw(s.as_ptr() as *mut _), PSTR::from_raw(s.as_ptr() as *mut _), MB_OK)};
-
     // todo process args and send to engine
 
     // proceed with the syscall

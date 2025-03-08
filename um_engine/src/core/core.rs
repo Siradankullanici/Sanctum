@@ -1,6 +1,6 @@
 use std::{sync::Arc, time::Duration};
 
-use shared_std::processes::{EtwMessage, EventTypeWithWeight, Process, EVENT_SOURCE_ETW, EVENT_SOURCE_SYSCALL_HOOK};
+use shared_std::processes::Process;
 use tokio::{sync::{mpsc, Mutex, RwLock}, time::sleep};
 
 use crate::{driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}};
@@ -75,37 +75,15 @@ impl Core {
         //
         loop {
             // See if there is a message from the injected DLL
-            if let Ok(recv_syscall_notification) = rx.try_recv() {
-                match recv_syscall_notification {
-                    shared_std::processes::Syscall::OpenProcess(open_process_data) => {
-                        let mut lock = self.process_monitor.write().await;
-                        println!("[BUG] Open process detected from syscall hook");
-                        // BUG: This is being called twice from the kernel leading to a dangling timer; disabling for now
-                        // lock.ghost_hunt_add_event(open_process_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::OpenProcess);
-                    },
-                    shared_std::processes::Syscall::VirtualAllocEx(virtual_alloc_ex_data) => {
-                        let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(virtual_alloc_ex_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::VirtualAllocEx);
-                    },
-                    shared_std::processes::Syscall::WriteVirtualMemory(write_vm_data) => {
-                        let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(write_vm_data.inner, EVENT_SOURCE_SYSCALL_HOOK, EventTypeWithWeight::WriteProcessMemoryRemote);
-                    },
-                }
+            if let Ok(rx) = rx.try_recv() {
+                let mut lock = self.process_monitor.write().await;
+                lock.ghost_hunt_add_event(rx);
             }
 
             // Check for events from the ETW listener
-            if let Ok(etw_notification) = rx_etw.try_recv() {
-                match etw_notification {
-                    EtwMessage::VirtualAllocEx(etw_data) => {
-                        let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(etw_data, EVENT_SOURCE_ETW, EventTypeWithWeight::VirtualAllocEx);
-                    },
-                    EtwMessage::WriteProcessMemoryRemote(etw_data) => {
-                        let mut lock = self.process_monitor.write().await;
-                        lock.ghost_hunt_add_event(etw_data, EVENT_SOURCE_ETW, EventTypeWithWeight::WriteProcessMemoryRemote);
-                    },
-                }
+            if let Ok(rx) = rx_etw.try_recv() {
+                let mut lock = self.process_monitor.write().await;
+                lock.ghost_hunt_add_event(rx);
             }
 
             // contact the driver and get any messages from the kernel 

@@ -2,7 +2,7 @@
 //! with the engine, and this module provides the functionality for this.
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
-use serde_json::from_slice;
+use serde_json::{from_slice, Value};
 use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
@@ -10,9 +10,7 @@ use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProces
 use crate::utils::{log::{Log, LogLevel}, security::create_security_attributes};
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
-pub async fn run_ipc_for_injected_dll(
-    tx: Sender<Syscall>
-) {
+pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
     // Store the pointer in the atomic so we can safely access it across 
     let mut sec_attr = create_security_attributes();
 
@@ -76,7 +74,7 @@ pub async fn run_ipc_for_injected_dll(
                                         todo!()
                                     },
                                 };
-                                if pipe_pid != syscall.get_pid() {
+                                if pipe_pid != syscall.pid {
                                     // todo this is bad and should do something
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
