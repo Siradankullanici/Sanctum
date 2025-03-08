@@ -1,4 +1,4 @@
-use std::time::SystemTime;
+use std::{rc::Rc, time::SystemTime};
 use serde::{Deserialize, Serialize};
 
 
@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 ///
 /// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
 /// only able to be caught by ETW and the syscall hook.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
 pub enum SyscallEventSource {
     EventSourceKernel = 0x1,
     EventSourceSyscallHook = 0x2,
@@ -42,11 +42,12 @@ pub struct GhostHuntingTimer {
     pub timer: SystemTime,
     pub event_type: NtFunction,
     /// todo update docs
-    pub origin: u8,
+    pub origin: SyscallEventSource,
     /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
     /// sources of telemetry, we cannot do a 1:1 cancellation process.
     /// todo update docs
-    pub cancellable_by: u8,
+    pub cancellable_by: isize,
+    pub weight: i16,
 }
 
 
@@ -61,15 +62,9 @@ pub struct GhostHuntingTimer {
 /// - `evasion_weight`: The weight associated with the event if EDR evasion is detected.
 /// - todo: `event_weight` for general weighting if this occurs, same as the normal weight i guess?
 #[derive(Debug, Clone, Serialize, Deserialize)]
-#[serde(bound(
-    serialize = "T: Serialize",
-    deserialize = "T: for<'a> Deserialize<'a>"
-))]
-pub struct Syscall<T> 
-where T: Serialize + for<'a> Deserialize<'a> {
+pub struct Syscall {
     pub nt_function: NtFunction,
     pub pid: u32,
-    pub data: Option<T>,
     pub source: SyscallEventSource,
     pub evasion_weight: i16,
 }
@@ -77,27 +72,27 @@ where T: Serialize + for<'a> Deserialize<'a> {
 /// todo docs
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum NtFunction {
-    NtOpenProcess,
-    NtWriteVirtualMemory,
-    NtAllocateVirtualMemory,
+    NtOpenProcess(Option<NtOpenProcessData>),
+    NtWriteVirtualMemory(Option<NtWriteVirtualMemoryData>),
+    NtAllocateVirtualMemory(Option<NtAllocateVirtualMemory>),
 }
 
 /// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtOpenProcess {
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct NtOpenProcessData {
     pub target_pid: u32,
 }
 
 /// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct NtWriteVirtualMemory {
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+pub struct NtWriteVirtualMemoryData {
     pub target_pid: u32,
     pub base_address: usize,
     pub buf_len: usize,
 }
 
 /// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
 pub struct NtAllocateVirtualMemory {
     /// The base address is the base of the remote process which is stored as a usize but is actually a hex
     /// address and will need converting if using as an address.
@@ -113,18 +108,16 @@ pub struct NtAllocateVirtualMemory {
     pub remote_pid: u32,
 }
 
-impl<T> Syscall<T> 
-where T: Serialize + for<'a> Deserialize<'a> {
+impl Syscall {
     /// Creates a new Syscall data packet where the source is from the ETW module
     pub fn new_etw(pid: u32, nt_function: NtFunction, evasion_weight: i16) -> Self {
         Self {
             nt_function,
             pid,
-            data: None,
             source: SyscallEventSource::EventSourceEtw,
             evasion_weight,
         }
     }
 }
 
-unsafe impl<T> Send for Syscall<T> where T: Serialize + for<'a> Deserialize<'a>{}
+unsafe impl Send for Syscall {}

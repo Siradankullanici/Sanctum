@@ -1,7 +1,7 @@
 //! Stubs that act as callback functions from syscalls.
 
 use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{NtAllocateVirtualMemory, NtFunction, NtOpenProcess, NtWriteVirtualMemory, Syscall, SyscallEventSource};
+use shared_std::processes::{NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
 use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
 use crate::ipc::send_syscall_info_ipc;
 
@@ -19,11 +19,12 @@ unsafe extern "system" fn open_process(
         let pid = unsafe { GetCurrentProcessId() };
 
         let data = Syscall {
-            nt_function: NtFunction::NtOpenProcess,
+            nt_function: NtFunction::NtOpenProcess(
+                Some(NtOpenProcessData {
+                    target_pid,
+                })
+            ),
             pid,
-            data: Some(NtOpenProcess {
-                target_pid,
-            }),
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 30,
         };
@@ -82,15 +83,16 @@ unsafe extern "system" fn virtual_alloc_ex(
         };
 
         let data = Syscall {
-            nt_function: NtFunction::NtAllocateVirtualMemory,
+            nt_function: NtFunction::NtAllocateVirtualMemory(
+                Some(NtAllocateVirtualMemory {
+                    base_address: base_address as usize,
+                    region_size: region_size_checked,
+                    allocation_type,
+                    protect,
+                    remote_pid,
+                }),
+            ),
             pid,
-            data: Some(NtAllocateVirtualMemory {
-                base_address: base_address as usize,
-                region_size: region_size_checked,
-                allocation_type,
-                protect,
-                remote_pid,
-            }),
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 60,
         };
@@ -140,13 +142,16 @@ unsafe extern "system" fn nt_write_virtual_memory(
     // todo inspect buffer  for magic bytes + dos header, etc
 
     let data = Syscall {
-        nt_function: NtFunction::NtWriteVirtualMemory,
+        nt_function: NtFunction::NtWriteVirtualMemory(
+            Some(
+                NtWriteVirtualMemoryData {
+                    target_pid: remote_pid,
+                    base_address: base_addr_as_usize,
+                    buf_len: buf_len_as_usize,
+                }
+            )
+        ),
         pid,
-        data: Some(NtWriteVirtualMemory {
-            target_pid: remote_pid,
-            base_address: base_addr_as_usize,
-            buf_len: buf_len_as_usize,
-        }),
         source: SyscallEventSource::EventSourceSyscallHook,
         evasion_weight: 60,
     };

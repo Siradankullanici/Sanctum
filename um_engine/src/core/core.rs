@@ -60,12 +60,12 @@ impl Core {
         
         // Start the IPC server for the injected DLL to communicate with the core
         tokio::spawn(async {
-            run_ipc_for_injected_dll::<()>(tx).await;
+            run_ipc_for_injected_dll(tx).await;
         });
 
         // Start the IPC server for the ETW consumer
         tokio::spawn(async {
-            run_ipc_for_etw::<()>(tx_etw).await;
+            run_ipc_for_etw(tx_etw).await;
         });
 
         

@@ -220,7 +220,7 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
 
         if keyword & KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE == KERNEL_THREATINT_KEYWORD_ALLOCVM_REMOTE {
             event_log(&format!("Remote memory allocation caught for pid: {}, image: {}. Data: {:?}", pid, process_image, event_header.EventDescriptor), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
-            send_etw_info_ipc(Syscall::<()>::new_etw(pid, NtFunction::NtAllocateVirtualMemory, 60));
+            send_etw_info_ipc(Syscall::new_etw(pid, NtFunction::NtAllocateVirtualMemory(None), 60));
         } 
         
         if keyword & KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL == KERNEL_THREATINT_KEYWORD_PROTECTVM_LOCAL {
@@ -230,11 +230,11 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
         
         if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL == KERNEL_THREATINT_KEYWORD_WRITEVM_LOCAL {
             event_log(&format!("Write local for pid: {}, image: {}. FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
-            // todo
+            send_etw_info_ipc(Syscall::new_etw(pid, NtFunction::NtWriteVirtualMemory(None), 60));
         }
 
         if keyword & KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE {
-            send_etw_info_ipc(Syscall::<()>::new_etw(pid, NtFunction::NtWriteVirtualMemory, 60));
+            send_etw_info_ipc(Syscall::new_etw(pid, NtFunction::NtWriteVirtualMemory(None), 60));
             event_log(&format!("Write remote memory for pid: {}, image: {}, FLAGS: {:b}, Data: {:?}, keyword - bin: {:b} hex: {:X}", pid, process_image, unsafe{&(*record).EventHeader.Flags}, event_header.EventDescriptor, event_header.EventDescriptor.Task, event_header.EventDescriptor.Task), EVENTLOG_SUCCESS, EventID::ProcessOfInterestTI);
         }
     }
