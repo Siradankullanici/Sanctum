@@ -1,9 +1,10 @@
-use std::{fmt::Debug, time::Duration};
+use std::fmt::Debug;
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{to_value, to_vec};
 use shared_no_std::{constants::PIPE_NAME, ipc::CommandRequest};
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{ClientOptions, NamedPipeClient}, time::sleep};
+use shared_std::{constants::PIPE_FOR_GUI, security::create_security_attributes};
+use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{ClientOptions, NamedPipeClient, ServerOptions}};
 
 pub struct IpcClient {
     client: NamedPipeClient,
@@ -81,8 +82,40 @@ impl IpcClient {
 
 /// An IPC server for inbound notifications from the EDR where we aren't sending outbound polls.
 pub async fn global_inbound_ipc() {
-    loop {
-        println!("Hello there?");
-        sleep(Duration::from_secs(1)).await;
-    }
+    let mut sec_attr = create_security_attributes();
+
+    // SAFETY: Null pointer checked at start of function
+    let mut server = unsafe {ServerOptions::new()
+        .first_pipe_instance(true)
+        .create_with_security_attributes_raw(PIPE_FOR_GUI, &mut sec_attr as *mut _ as *mut _)
+        .expect("[-] Unable to create named pipe server for ETW receiver")};
+    
+    let _ = tokio::spawn(async move {
+        loop {
+            // wait for a connection 
+            server.connect().await.expect("Could not get a client connection for ETW ipc");
+            let mut connected_client = server;
+
+            let mut sec_attr = create_security_attributes();
+            
+            // SAFETY: null pointer checked above
+            server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_GUI, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for ETW pipe listener") };
+
+            //
+            // process the inbound message
+            //
+            let _ = tokio::spawn(async move {
+                let mut buffer = vec![0; 1024];
+                match connected_client.read(&mut buffer).await {
+                    Ok(bytes_read) => {
+                        if bytes_read == 0 { return };
+                        todo!();
+                        // match from_slice::<Syscall>(&buffer[..bytes_read]) {
+                        // }
+                    },
+                    Err(_) => todo!(),
+                };
+            });
+        }
+    });
 }
