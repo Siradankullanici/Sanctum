@@ -3378,6 +3378,7 @@ dependencies = [
  "serde",
  "serde_json",
  "shared_no_std",
+ "windows 0.60.0",
 ]
 
 [[package]]

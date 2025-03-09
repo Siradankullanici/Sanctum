@@ -2,12 +2,12 @@
 //! with the engine, and this module provides the functionality for this.
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
-use serde_json::{from_slice, Value};
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{DLLMessage, Syscall}};
+use serde_json::from_slice;
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{DLLMessage, Syscall}, security::create_security_attributes};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
 
-use crate::utils::{log::{Log, LogLevel}, security::create_security_attributes};
+use crate::utils::log::{Log, LogLevel};
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
 pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {

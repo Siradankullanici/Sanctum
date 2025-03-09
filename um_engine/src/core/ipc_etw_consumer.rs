@@ -2,10 +2,10 @@
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_ETW, processes::Syscall};
+use shared_std::{constants::PIPE_FOR_ETW, processes::Syscall, security::create_security_attributes};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
-use crate::{engine::PPL_SERVICE_PID, utils::{log::{Log, LogLevel}, security::create_security_attributes}};
+use crate::{engine::PPL_SERVICE_PID, utils::log::{Log, LogLevel}};
 
 /// Starts the IPC server for the ETW running from PPL
 pub async fn run_ipc_for_etw(tx: Sender<Syscall>) {
