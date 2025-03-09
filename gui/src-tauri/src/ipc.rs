@@ -4,6 +4,7 @@ use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{to_value, to_vec};
 use shared_no_std::{constants::PIPE_NAME, ipc::CommandRequest};
 use shared_std::{constants::PIPE_FOR_GUI, security::create_security_attributes};
+use tauri_winrt_notification::{Duration, Sound, Toast};
 use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{ClientOptions, NamedPipeClient, ServerOptions}};
 
 pub struct IpcClient {
@@ -82,6 +83,34 @@ impl IpcClient {
 
 /// An IPC server for inbound notifications from the EDR where we aren't sending outbound polls.
 pub async fn global_inbound_ipc() {
+
+    // test notification 
+    // todo app id needs to be valid?
+    Toast::new(Toast::POWERSHELL_APP_ID)
+        .title("Test!")
+        .text1("Text 1!")
+        .text2("Text 2!")
+        .sound(Some(Sound::Default))
+        .add_button("test content", "my_action")
+        .on_activated({
+            move |action| {
+                match action.as_deref() {
+                    Some("my_action") => {
+                        println!("Matched on my_action!");
+                        Ok(())
+                    },
+                    _ => {
+                        println!("Hmmm");
+                        Ok(())
+                    },
+                }
+            }
+        })
+        .duration(Duration::Short)
+        .show()
+        .expect("Could not show popup");
+
+
     let mut sec_attr = create_security_attributes();
 
     // SAFETY: Null pointer checked at start of function
