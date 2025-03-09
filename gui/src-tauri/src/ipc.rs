@@ -1,9 +1,9 @@
-use std::fmt::Debug;
+use std::{fmt::Debug, time::Duration};
 
 use serde::{de::DeserializeOwned, Serialize};
 use serde_json::{to_value, to_vec};
 use shared_no_std::{constants::PIPE_NAME, ipc::CommandRequest};
-use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{ClientOptions, NamedPipeClient}};
+use tokio::{io::{self, AsyncReadExt, AsyncWriteExt}, net::windows::named_pipe::{ClientOptions, NamedPipeClient}, time::sleep};
 
 pub struct IpcClient {
     client: NamedPipeClient,
@@ -77,4 +77,12 @@ impl IpcClient {
 
     }
 
+}
+
+/// An IPC server for inbound notifications from the EDR where we aren't sending outbound polls.
+pub async fn global_inbound_ipc() {
+    loop {
+        println!("Hello there?");
+        sleep(Duration::from_secs(1)).await;
+    }
 }
