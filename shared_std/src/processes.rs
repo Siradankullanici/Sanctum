@@ -50,6 +50,13 @@ pub struct GhostHuntingTimer {
     pub weight: i16,
 }
 
+/// A wrapper for IPC messages sent by the injected DLL in all processes. This allows the same IPC interface to
+/// be used across any number of IPC senders, so long as the enum has a discriminant for it.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum DLLMessage {
+    SyscallWrapper(Syscall),
+    NtdllOverwrite,
+}
 
 /****************************** SYSCALLS *******************************/
 

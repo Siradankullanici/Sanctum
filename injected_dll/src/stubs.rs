@@ -1,9 +1,9 @@
 //! Stubs that act as callback functions from syscalls.
 
 use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
+use shared_std::processes::{DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
 use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
-use crate::ipc::send_syscall_info_ipc;
+use crate::ipc::send_ipc_to_engine;
 
 /// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
 /// any process this DLL is injected into.
@@ -18,19 +18,21 @@ unsafe extern "system" fn open_process(
         let target_pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
         let pid = unsafe { GetCurrentProcessId() };
 
-        let data = Syscall {
-            nt_function: NtFunction::NtOpenProcess(
-                Some(NtOpenProcessData {
-                    target_pid,
-                })
-            ),
-            pid,
-            source: SyscallEventSource::EventSourceSyscallHook,
-            evasion_weight: 30,
-        };
+        let data = DLLMessage::SyscallWrapper(
+            Syscall {
+                nt_function: NtFunction::NtOpenProcess(
+                    Some(NtOpenProcessData {
+                        target_pid,
+                    }),
+                ),
+                pid,
+                source: SyscallEventSource::EventSourceSyscallHook,
+                evasion_weight: 30,
+            }
+        );
 
         // send the telemetry to the engine
-        send_syscall_info_ipc(data);
+        send_ipc_to_engine(data);
     }
     
     // todo automate the syscall number so not hardcoded
@@ -82,22 +84,24 @@ unsafe extern "system" fn virtual_alloc_ex(
             unsafe { *region_size }
         };
 
-        let data = Syscall {
-            nt_function: NtFunction::NtAllocateVirtualMemory(
-                Some(NtAllocateVirtualMemory {
-                    base_address: base_address as usize,
-                    region_size: region_size_checked,
-                    allocation_type,
-                    protect,
-                    remote_pid,
-                }),
-            ),
-            pid,
-            source: SyscallEventSource::EventSourceSyscallHook,
-            evasion_weight: 60,
-        };
+        let data = DLLMessage::SyscallWrapper(
+            Syscall {
+                nt_function: NtFunction::NtAllocateVirtualMemory(
+                    Some(NtAllocateVirtualMemory {
+                        base_address: base_address as usize,
+                        region_size: region_size_checked,
+                        allocation_type,
+                        protect,
+                        remote_pid,
+                    }),
+                ),
+                pid,
+                source: SyscallEventSource::EventSourceSyscallHook,
+                evasion_weight: 60,
+            }
+        );
     
-        send_syscall_info_ipc(data);
+        send_ipc_to_engine(data);
     }
     
     // proceed with the syscall
@@ -156,7 +160,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
         evasion_weight: 60,
     };
 
-    send_syscall_info_ipc(data);
+    send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
     let ssn = 0x3a;

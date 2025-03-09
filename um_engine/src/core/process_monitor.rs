@@ -51,11 +51,6 @@ pub enum ProcessErrors {
     FailedToOpenProcess,
 }
 
-#[derive(Debug)]
-pub struct GhostHuntSource {
-
-}
-
 
 impl ProcessMonitor {
     pub fn new() -> Self {

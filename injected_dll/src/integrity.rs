@@ -3,7 +3,10 @@
 use std::{ffi::{c_void, CStr}, time::Duration};
 
 use md5::{Digest, Md5};
+use shared_std::processes::DLLMessage;
 use windows::{core::s, Win32::System::{Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER}, LibraryLoader::GetModuleHandleA, SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE}}};
+
+use crate::ipc::send_ipc_to_engine;
 
 /// The entrypoint to starting the NTDLL integrity checker. This will spawn a new OS thread which will occasionally monitor the 
 /// integrity of NTDLL to check for changes to the .text segment of NTDLL in memory. Once we have hooked the DLL there should be no 
@@ -118,8 +121,10 @@ fn periodically_check_ntdll_hash(ntdll: NtdllIntegrity) -> ! {
         
         let hash = hash_ntdll_text_segment(&ntdll);
         if hash != ntdll.hash {
-            // todo - inform EDR of badness!
-            println!("HASH CHANGE DETECTED. Old: {}, New: {}", ntdll.hash, hash);
+            // todo - rehash - let the engine figure out what to do
+            println!("Hash change detected, sending info to engine. Old: {}, New: {}", ntdll.hash, hash);
+            send_ipc_to_engine(DLLMessage::NtdllOverwrite);
+            hash_ntdll_text_segment(&ntdll);
         }
 
         std::thread::sleep(Duration::from_secs(1));

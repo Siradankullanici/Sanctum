@@ -3,7 +3,7 @@
 
 use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
 use serde_json::{from_slice, Value};
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::Syscall};
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{DLLMessage, Syscall}};
 use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
 
@@ -54,33 +54,40 @@ pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
                         let s = String::from_utf8_lossy(&buffer);
 
                         // deserialise the request
-                        match from_slice::<Syscall>(&buffer[..bytes_read]) {
-                            Ok(syscall) => {
+                        match from_slice::<DLLMessage>(&buffer[..bytes_read]) {
+                            Ok(message) => {
+                                match message {
+                                    DLLMessage::SyscallWrapper(syscall) => {
+                                        // 
+                                        // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
+                                        // IPC from the malware saying you are performing an operation via a hooked syscall; when in actuality you are
+                                        // using direct syscalls to evade detection etc.
+                                        //
+                                        // Therefore, in order to combat this we can enforce IPC messages to contain the HasPid trait, so that all inbound
+                                        // IPC messages contain a pid. We can then compare the pid offered by the message, with the PID the pipe actually came
+                                        // from to verify the message authenticity.
+                                        //
+                                        let pipe_pid = match get_pid_from_pipe(&connected_client) {
+                                            Some(p) => p,
+                                            None => {
+                                                // todo this is bad and should do something
+                                                eprintln!("!!!!!!!!!!!!! GOT NO PID");
+                                                todo!()
+                                            },
+                                        };
+                                        if pipe_pid != syscall.pid {
+                                            // todo this is bad and should do something
+                                            eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
+                                        }
 
-                                // 
-                                // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
-                                // IPC from the malware saying you are performing an operation via a hooked syscall; when in actuality you are
-                                // using direct syscalls to evade detection etc.
-                                //
-                                // Therefore, in order to combat this we can enforce IPC messages to contain the HasPid trait, so that all inbound
-                                // IPC messages contain a pid. We can then compare the pid offered by the message, with the PID the pipe actually came
-                                // from to verify the message authenticity.
-                                //
-                                let pipe_pid = match get_pid_from_pipe(&connected_client) {
-                                    Some(p) => p,
-                                    None => {
-                                        // todo this is bad and should do something
-                                        eprintln!("!!!!!!!!!!!!! GOT NO PID");
-                                        todo!()
+                                        if let Err(e) = tx_cl.send(syscall).await {
+                                            logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
+                                        }
                                     },
-                                };
-                                if pipe_pid != syscall.pid {
-                                    // todo this is bad and should do something
-                                    eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
-                                }
-
-                                if let Err(e) = tx_cl.send(syscall).await {
-                                    logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
+                                    DLLMessage::NtdllOverwrite => {
+                                        // todo
+                                        println!("[i] NTDLL manipulation detected!");
+                                    },
                                 }
                             },
                             Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}. Got: {s}")),
