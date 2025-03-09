@@ -39,6 +39,7 @@
         "movabs",
         "NONALERT",
         "nonoverlapping",
+        "nostack",
         "ntddk",
         "NTDLL",
         "ntoskrnl",

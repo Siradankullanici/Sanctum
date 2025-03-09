@@ -151,10 +151,7 @@ impl Core {
                         
                     ^ to the abv hashmap
                 */
-            }
-
-            sleep(Duration::from_millis(self.driver_poll_rate)).await;
-            
+            }            
         }
     }
 
