@@ -84,6 +84,10 @@ impl IpcClient {
 /// An IPC server for inbound notifications from the EDR where we aren't sending outbound polls.
 pub async fn global_inbound_ipc() {
 
+    return;
+
+    // todo below
+
     // test notification 
     // todo app id needs to be valid?
     Toast::new(Toast::POWERSHELL_APP_ID)
