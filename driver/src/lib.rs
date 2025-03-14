@@ -17,6 +17,7 @@ use ::core::{
 };
 use alloc::{boxed::Box, format};
 use core::{
+    etw_mon::resolve_relative_symbol_offset,
     processes::{process_create_callback, ProcessHandleCallback},
     threads::{set_thread_creation_callback, thread_callback},
 };
@@ -40,7 +41,7 @@ use wdk_sys::{
     ntddk::{
         IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink,
         IofCompleteRequest, ObUnRegisterCallbacks, PsRemoveCreateThreadNotifyRoutine,
-        PsSetCreateProcessNotifyRoutineEx, PsSetCreateThreadNotifyRoutineEx, RtlInitUnicodeString,
+        PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString,
     },
     DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN,
     FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL,
@@ -93,6 +94,9 @@ pub unsafe extern "system" fn driver_entry(
     }
 
     let status = configure_driver(driver, registry_path as *mut _);
+
+    let result = resolve_relative_symbol_offset("KeInsertQueueApc", 35);
+    println!("Result of resolve_relative_symbol_offset: {:?}", result);
 
     status
 }
