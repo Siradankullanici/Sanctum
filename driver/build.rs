@@ -1,6 +1,6 @@
+use std::env;
 use std::fs::write;
 use std::process::Command;
-use std::env;
 
 fn main() -> Result<(), wdk_build::ConfigError> {
     println!("Starting build process...");

@@ -1,9 +1,23 @@
 use core::{iter::once, ptr::null_mut, sync::atomic::Ordering};
 
-use alloc::{vec, format, string::{String, ToString}, vec::Vec};
+use alloc::{
+    format,
+    string::{String, ToString},
+    vec,
+    vec::Vec,
+};
 use shared_no_std::constants::SanctumVersion;
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose, ZwCreateFile, ZwWriteFile}, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, STATUS_SUCCESS, STRING, UNICODE_STRING};
+use wdk_sys::{
+    ntddk::{
+        KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose,
+        ZwCreateFile, ZwWriteFile,
+    },
+    FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK,
+    OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE,
+    POBJECT_ATTRIBUTES, STATUS_SUCCESS, STRING, UNICODE_STRING,
+};
 
 use crate::{ffi::InitializeObjectAttributes, DRIVER_MESSAGES};
 
@@ -80,7 +94,6 @@ pub fn create_unicode_string(s: &Vec<u16>) -> Option<UNICODE_STRING> {
     })
 }
 
-
 pub trait ToU16Vec {
     fn to_u16_vec(&self) -> Vec<u16>;
 }
@@ -102,14 +115,12 @@ impl ToU16Vec for &str {
     }
 }
 
-
 /// Checks the compatibility of the driver and client versions based on major.minor.patch fields.
-/// 
+///
 /// # Returns
-/// 
+///
 /// True if compatible, false otherwise.
 pub fn check_driver_version(client_version: &SanctumVersion) -> bool {
-
     // only compatible with versions less than 1
     if client_version.major >= 1 {
         return false;
@@ -125,7 +136,6 @@ pub fn check_driver_version(client_version: &SanctumVersion) -> bool {
 /// - `DriverError::LengthTooLarge` if the input exceeds `MAX_LEN`.
 /// - `DriverError::Unknown` if the conversion fails.
 pub fn unicode_to_string(input: *const UNICODE_STRING) -> Result<String, DriverError> {
-
     if input.is_null() {
         println!("[sanctum] [-] Null pointer passed to unicode_to_string.");
         return Err(DriverError::NullPtr);
@@ -151,7 +161,8 @@ pub fn unicode_to_string(input: *const UNICODE_STRING) -> Result<String, DriverE
     }
 
     // create the String
-    let slice = unsafe { core::slice::from_raw_parts(ansi.Buffer as *const u8, ansi.Length as usize) };
+    let slice =
+        unsafe { core::slice::from_raw_parts(ansi.Buffer as *const u8, ansi.Length as usize) };
     Ok(String::from_utf8_lossy(slice).to_string())
 }
 
@@ -172,14 +183,14 @@ pub enum LogLevel {
 impl<'a> Log<'a> {
     pub fn new() -> Self {
         Log {
-            log_path: r"\SystemRoot\sanctum_driver.log"
+            log_path: r"\SystemRoot\sanctum_driver.log",
         }
     }
 
     /// Log kernel events / debug messages directly to the sanctum_driver.log file in
     /// \SystemRoot\sanctum\. This will not send any log messages to userland, other than when an error
     /// occurs writing to sanctum_driver.log
-    /// 
+    ///
     /// # Args
     /// - level: LogLevel - the level of logging required for the event
     /// - msg: &str - a formatted str to be logged
@@ -190,7 +201,11 @@ impl<'a> Log<'a> {
         // doesn't modify the string. Consider RefCell for interior mutability.
         //
         let mut log_path_unicode = UNICODE_STRING::default();
-        let src = self.log_path.encode_utf16().chain(once(0)).collect::<Vec<_>>();
+        let src = self
+            .log_path
+            .encode_utf16()
+            .chain(once(0))
+            .collect::<Vec<_>>();
         unsafe { RtlInitUnicodeString(&mut log_path_unicode, src.as_ptr()) };
 
         //
@@ -203,12 +218,15 @@ impl<'a> Log<'a> {
                 &mut log_path_unicode,
                 OBJ_CASE_INSENSITIVE | OBJ_KERNEL_HANDLE,
                 null_mut(),
-                null_mut(),      
+                null_mut(),
             )
         };
         if result.is_err() {
             println!("[sanctum] [-] Error calling InitializeObjectAttributes. No log event taking place..");
-            self.log_to_userland("[-] Error calling InitializeObjectAttributes. No log event taking place..".to_string());
+            self.log_to_userland(
+                "[-] Error calling InitializeObjectAttributes. No log event taking place.."
+                    .to_string(),
+            );
             return;
         }
 
@@ -241,13 +259,15 @@ impl<'a> Log<'a> {
                 FILE_OPEN_IF,
                 FILE_SYNCHRONOUS_IO_NONALERT,
                 null_mut(),
-                0
+                0,
             )
         };
 
         if result != STATUS_SUCCESS || handle.is_null() {
             println!("[sanctum] [-] Result of ZwCreateFile was not success - result: {result}. Returning.");
-            self.log_to_userland(format!("Result of ZwCreateFile was not success - result: {result}. Returning."));
+            self.log_to_userland(format!(
+                "Result of ZwCreateFile was not success - result: {result}. Returning."
+            ));
             unsafe {
                 if !handle.is_null() {
                     let _ = ZwClose(*handle);
@@ -256,7 +276,7 @@ impl<'a> Log<'a> {
             }
             return;
         }
-        
+
         //
         // Write data to the file
         //
@@ -264,16 +284,21 @@ impl<'a> Log<'a> {
         // convert the input message to a vector we can pass into the write file
         // heap allocating as the ZwWriteFile requires us to have a mutable pointer, so we
         // cannot use a &str.as_mut_ptr()
-        let buf: Vec<u8> = msg.as_bytes().iter().chain("\r\n".as_bytes().iter()).cloned().collect();
+        let buf: Vec<u8> = msg
+            .as_bytes()
+            .iter()
+            .chain("\r\n".as_bytes().iter())
+            .cloned()
+            .collect();
 
         let result = unsafe {
             ZwWriteFile(
-                handle as *mut _ as *mut _, 
+                handle as *mut _ as *mut _,
                 null_mut(),
-                None, 
-                null_mut(), 
-                &mut io_status_block, 
-                buf.as_ptr() as *mut _, 
+                None,
+                null_mut(),
+                &mut io_status_block,
+                buf.as_ptr() as *mut _,
                 buf.len() as u32,
                 null_mut(), // should be ignored due to flag FILE_APPEND_DATA
                 null_mut(),
@@ -300,7 +325,6 @@ impl<'a> Log<'a> {
                 println!("[sanctum] [+] Closed file handle");
             }
         }
-
     }
 
     /// Send a message to userland from the kernel, via the DriverMessages feature
