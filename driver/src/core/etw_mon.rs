@@ -15,18 +15,15 @@ use wdk_sys::{
     _MODE::KernelMode,
 };
 
-pub fn monitor_etw_dispatch_table() -> Result<(), ()> {
-    let table = match get_etw_dispatch_table() {
-        Ok(t) => t,
-        Err(_) => panic!("[sanctum] [-] Could not get the ETW Kernel table"),
-    };
+/// Entrypoint for monitoring kernel ETW structures to detect rootkits or other ETW manipulation
+pub fn monitor_kernel_etw() {
+    // Call the functions
+    monitor_etw_dispatch_table()
+        .expect("[sanctum] [-] Failed to start the monitoring of ETW Table");
+    monitor_system_logger_bitmask()
+        .expect("[sanctum] [-] Failed to start the monitoring of system logging ETW bitmask");
 
-    // use my `fast-mutex` crate to wrap the ETW table in a mutex and have it globally accessible
-    if let Err(e) = Grt::register_fast_mutex_checked("etw_table", table) {
-        panic!("[sanctum] [-] wdk-mutex could not register new fast mutex for etw_table");
-    }
-
-    // start the thread that will monitor for changes
+    // Start the thread that will monitor for changes
     let mut thread_handle: HANDLE = null_mut();
 
     let thread_status = unsafe {
@@ -66,6 +63,18 @@ pub fn monitor_etw_dispatch_table() -> Result<(), ()> {
         .expect("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX");
     Grt::register_fast_mutex("ETW_THREAD_HANDLE", object)
         .expect("[sanctum] [-] Could not register ETW_THREAD_HANDLE as a FAST_MUTEX");
+}
+
+fn monitor_etw_dispatch_table() -> Result<(), ()> {
+    let table = match get_etw_dispatch_table() {
+        Ok(t) => t,
+        Err(_) => panic!("[sanctum] [-] Could not get the ETW Kernel table"),
+    };
+
+    // use my `fast-mutex` crate to wrap the ETW table in a mutex and have it globally accessible
+    if let Err(e) = Grt::register_fast_mutex_checked("etw_table", table) {
+        panic!("[sanctum] [-] wdk-mutex could not register new fast mutex for etw_table");
+    }
 
     Ok(())
 }
@@ -232,6 +241,13 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
     Ok(dispatch_table)
 }
 
+/// This routine is to be spawned in a thread that monitors rootkit behaviour in the kernel where it tries to blind the
+/// EDR via ETW manipulation.
+///
+/// It monitors for manipulation of:
+///
+/// - ETW Kernel Dispatch Table
+/// - Disabling global active system loggers
 unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
     let table: &FastMutex<BTreeMap<&str, *const c_void>> = Grt::get_fast_mutex("etw_table")
         .expect("[sanctum] [-] Could not get fast mutex for etw_table");
@@ -250,39 +266,62 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
             break;
         }
 
-        // get a fresh copy of the table
-        let table_live_read = match get_etw_dispatch_table() {
-            Ok(t) => t,
-            Err(e) => match e {
-                EtwMonitorError::NullPtr => {
-                    // This case will tell us tampering has taken place and as such, we need to handle it - we will do this by
-                    // doing what Patch Guard will do, bringing about a kernel panic with the stop code CRITICAL_STRUCTURE_CORRUPTION.
-                    // This is acceptable as an EDR. Before panicking however, it would be good to send telemetry to a telemetry collection
-                    // service, for example if this was an actual networked EDR in an enterprise environment, we would want to send that
-                    // signal before we execute the bug check. Seeing as this is only building a POC, I am happy just to BSOD :)
-                    println!("[sanctum] [TAMPERING] Tampering detected with the ETW Kernel Table.");
-                    KeBugCheckEx(0x00000109, 0, 0, 0, 0);
-                }
-                EtwMonitorError::SymbolNotFound => {
-                    println!("[sanctum] [-] Etw function failed with SymbolNotFound when trying to read kernel symbols.");
-                    let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut sleep_time);
-                    continue;
-                }
-            },
-        };
+        // Check the ETW table for modification
+        check_etw_table_for_modification(table);
 
-        let table_lock = table.lock().unwrap();
-
-        if table_live_read != *table_lock {
-            // As above - this should shoot some telemetry off in a real world EDR
-            println!("[sanctum] [TAMPERING] ETW Tampering detected, the ETW table does not match the current ETW table.");
-            KeBugCheckEx(0x00000109, 0, 0, 0, 0);
-        }
+        // Check modification of the active system logger bitmask
+        check_etw_system_logger_modification();
 
         let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut sleep_time);
     }
 
     let _ = unsafe { PsTerminateSystemThread(STATUS_SUCCESS) };
+}
+
+fn check_etw_system_logger_modification() {
+    let bitmask_address: &FastMutex<(*const u32, u32)> = Grt::get_fast_mutex("system_logger_bitmask_addr").expect("[sanctum] [-] Could not get system_logger_bitmask_addr from Grt.");
+    let lock = bitmask_address.lock().unwrap();
+
+    if (*lock).0.is_null() {
+        println!("[sanctum] [-] system_logger_bitmask_addr bitmask was null, this is unexpected.");
+        return;
+    }
+
+    // Dereference the first item in the tuple (the address of the DWORD bitmask), and compare it with the item at the second tuple entry
+    // which is the original value we read when we initialised the driver.
+    if unsafe {*(*lock).0} != (*lock).1 {
+        println!("[sanctum] [TAMPERING] Modification detected!");
+        unsafe { KeBugCheckEx(0x00000109, 0, 0, 0, 0) };
+    }
+}
+
+fn check_etw_table_for_modification(table: &FastMutex<BTreeMap<&str, *const c_void>>) {
+    let table_live_read = match get_etw_dispatch_table() {
+        Ok(t) => t,
+        Err(e) => match e {
+            EtwMonitorError::NullPtr => {
+                // This case will tell us tampering has taken place and as such, we need to handle it - we will do this by
+                // doing what Patch Guard will do, bringing about a kernel panic with the stop code CRITICAL_STRUCTURE_CORRUPTION.
+                // This is acceptable as an EDR. Before panicking however, it would be good to send telemetry to a telemetry collection
+                // service, for example if this was an actual networked EDR in an enterprise environment, we would want to send that
+                // signal before we execute the bug check. Seeing as this is only building a POC, I am happy just to BSOD :)
+                println!("[sanctum] [TAMPERING] Tampering detected with the ETW Kernel Table.");
+                unsafe { KeBugCheckEx(0x00000109, 0, 0, 0, 0) };
+            }
+            EtwMonitorError::SymbolNotFound => {
+                println!("[sanctum] [-] Etw function failed with SymbolNotFound when trying to read kernel symbols.");
+                return;
+            }
+        },
+    };
+
+    let table_lock = table.lock().unwrap();
+
+    if table_live_read != *table_lock {
+        // As above - this should shoot some telemetry off in a real world EDR
+        println!("[sanctum] [TAMPERING] ETW Tampering detected, the ETW table does not match the current ETW table.");
+        unsafe { KeBugCheckEx(0x00000109, 0, 0, 0, 0) };
+    }
 }
 
 /// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_REG_ENTRY
@@ -341,7 +380,57 @@ struct ListEntry {
     blink: *const c_void,
 }
 
+#[derive(Debug)]
 enum EtwMonitorError {
     NullPtr,
     SymbolNotFound,
+}
+
+/// Monitor the system logger bitmask as observed to be exploited by Lazarus in their FudModule rootkit.
+///
+/// This function monitors abuse of teh _ETW_SILODRIVERSTATE.SystemLoggerSettings.EtwpActiveSystemLoggers bitmask.
+fn monitor_system_logger_bitmask() -> Result<(), ()> {
+    let address = resolve_relative_symbol_offset("EtwSendTraceBuffer", 78)
+        .expect("[ferric-fox] [-] Unable to resolve function EtwSendTraceBuffer")
+        as *const *const EtwSiloDriverState;
+
+    if address.is_null() {
+        println!("[sanctum] [-] Pointer to EtwSiloDriverState is null");
+        return Err(());
+    }
+
+    // SAFETY: Null pointer checked above
+    if unsafe { *address }.is_null() {
+        println!("[sanctum] [-] Address for EtwSiloDriverState is null");
+        return Err(());
+    }
+
+    // SAFETY: Null pointer checked above
+    let active_system_loggers = unsafe { &**address }.settings.active_system_loggers;
+
+    let logger_offset = size_of::<EtwSiloDriverState>();
+    let address_of_silo_driver_state_struct = unsafe { *address } as usize;
+    let logger_addr = address_of_silo_driver_state_struct + logger_offset - size_of::<u32>();
+    let addr = logger_addr as *const u32;
+
+    // Add to the GRT so that we can access it in the monitoring thread
+    Grt::register_fast_mutex("system_logger_bitmask_addr", (addr, active_system_loggers))
+        .expect("[sanctum] [-] Could not register fast mutex system_logger_bitmask_addr");
+
+    Ok(())
+}
+
+/// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_SILODRIVERSTATE
+#[repr(C)]
+struct EtwSiloDriverState {
+    unused: [u8; 0x1087],
+    settings: EtwSystemLoggerSettings,
+}
+
+/// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_SYSTEM_LOGGER_SETTINGS
+#[repr(C)]
+#[derive(Debug)]
+struct EtwSystemLoggerSettings {
+    unused: [u8; 0xf],
+    active_system_loggers: u32,
 }

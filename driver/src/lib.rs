@@ -18,7 +18,7 @@ use ::core::{
 };
 use alloc::{boxed::Box, format, vec::Vec};
 use core::{
-    etw_mon::monitor_etw_dispatch_table,
+    etw_mon::monitor_kernel_etw,
     processes::{process_create_callback, ProcessHandleCallback},
     threads::{set_thread_creation_callback, thread_callback},
 };
@@ -99,8 +99,7 @@ pub unsafe extern "system" fn driver_entry(
 
     let status = configure_driver(driver, registry_path as *mut _);
 
-    let res = monitor_etw_dispatch_table();
-    println!("Result of monitor_etw_dispatch_table {:?}", res);
+    monitor_kernel_etw();
 
     status
 }
