@@ -514,7 +514,14 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
     let mut result_map: BTreeMap<String, u32> = BTreeMap::new();
 
     /*
-    todo these need enumerating as sub-lists
+    todo these need enumerating as sub-lists for setting of _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled
+
+    todo and then need to iterate over the structs from this para - note this is the 4 flags, NOT _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled (just 1 DWORD):
+    Looking at the decompilation, there are two return 1 statements. Setting ProviderEnableInfo.IsEnabled to zero ensures that the first one is never reached.
+    However, the second return statement could still potentially execute. To make sure this doesn’t happen, the rootkit also iterates over all _ETW_REG_ENTRY 
+    structures from the _ETW_GUID_ENTRY.RegListHead linked list. For each of them, it makes a single doubleword write to zero out four masks, namely 
+    EnableMask, GroupEnableMask, HostEnableMask, and HostGroupEnableMask (or only EnableMask and GroupEnableMask on older builds, where the latter two masks 
+    were not yet introduced).  
 
     0: kd> dt nt!_ETW_GUID_ENTRY 0xffffaf8f6685f1d0
     +0x000 GuidList         : _LIST_ENTRY [ 0xffffaf8f`6f0c6320 - 0xffffaf8f`667ba8f0 ]
