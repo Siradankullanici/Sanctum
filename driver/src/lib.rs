@@ -17,7 +17,7 @@ use ::core::{
 };
 use alloc::{boxed::Box, format};
 use core::{
-    etw_mon::resolve_relative_symbol_offset,
+    etw_mon::monitor_etw_dispatch_table,
     processes::{process_create_callback, ProcessHandleCallback},
     threads::{set_thread_creation_callback, thread_callback},
 };
@@ -95,8 +95,8 @@ pub unsafe extern "system" fn driver_entry(
 
     let status = configure_driver(driver, registry_path as *mut _);
 
-    let result = resolve_relative_symbol_offset("KeInsertQueueApc", 35);
-    println!("Result of resolve_relative_symbol_offset: {:?}", result);
+    let res = monitor_etw_dispatch_table();
+    println!("Result of monitor_etw_dispatch_table {:?}", res);
 
     status
 }
