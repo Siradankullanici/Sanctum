@@ -8,7 +8,8 @@ use wdk::println;
 use wdk_mutex::{fast_mutex::FastMutex, grt::Grt};
 use wdk_sys::{
     ntddk::{
-        KeBugCheckEx, KeDelayExecutionThread, MmGetSystemRoutineAddress, ObReferenceObjectByHandle, PsCreateSystemThread, PsTerminateSystemThread, RtlInitUnicodeString
+        KeBugCheckEx, KeDelayExecutionThread, MmGetSystemRoutineAddress, ObReferenceObjectByHandle,
+        PsCreateSystemThread, PsTerminateSystemThread, RtlInitUnicodeString,
     },
     FALSE, HANDLE, LARGE_INTEGER, STATUS_SUCCESS, THREAD_ALL_ACCESS, UNICODE_STRING,
     _MODE::KernelMode,
@@ -234,7 +235,7 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
 unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
     let table: &FastMutex<BTreeMap<&str, *const c_void>> = Grt::get_fast_mutex("etw_table")
         .expect("[sanctum] [-] Could not get fast mutex for etw_table");
-    let delay_as_duration = Duration::from_secs(1);
+    let delay_as_duration = Duration::from_micros(1);
     let mut sleep_time = LARGE_INTEGER {
         QuadPart: -((delay_as_duration.as_nanos() / 100) as i64),
     };
@@ -273,18 +274,9 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
         let table_lock = table.lock().unwrap();
 
         if table_live_read != *table_lock {
+            // As above - this should shoot some telemetry off in a real world EDR
             println!("[sanctum] [TAMPERING] ETW Tampering detected, the ETW table does not match the current ETW table.");
-            panic!();
-        } else {
-            println!("[sanctum] [i] Tables match.");
-            println!("Live table:");
-            for item in table_live_read {
-                println!("{}, {:p}", item.0, item.1);
-            }
-            println!("OG table:");
-            for item in &*table_lock {
-                println!("{}, {:p}", item.0, *item.1);
-            }
+            KeBugCheckEx(0x00000109, 0, 0, 0, 0);
         }
 
         let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut sleep_time);
