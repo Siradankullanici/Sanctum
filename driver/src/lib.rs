@@ -4,6 +4,7 @@
 //      GH: https://github.com/0xflux
 //      Blog: https://fluxsec.red/
 
+#![feature(map_try_insert)]
 #![no_std]
 extern crate alloc;
 

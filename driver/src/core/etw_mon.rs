@@ -1,7 +1,9 @@
 //! Monitoring of the Events Tracing for Windows kernel structures for tampering by
 //! rootkits or kernel mode exploitation.
 
-use core::{ffi::c_void, ptr::null_mut, time::Duration};
+use core::{
+    arch::asm, ffi::c_void, ptr::{null, null_mut}, time::Duration
+};
 
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
 use wdk::println;
@@ -284,14 +286,15 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
 }
 
 fn check_etw_guids_for_tampering() {
-    let guid_table: &FastMutex<BTreeMap<String, u32>> = Grt::get_fast_mutex("etw_guid_table").expect("[sanctum] [-] Could not get etw_guid_table");
+    let guid_table: &FastMutex<BTreeMap<String, u32>> =
+        Grt::get_fast_mutex("etw_guid_table").expect("[sanctum] [-] Could not get etw_guid_table");
 
     let cache_guid_table = match monitor_all_guids_for_is_enabled_flag() {
         Ok(c) => c,
         Err(_) => {
             println!("[sanctum] [-] Call to monitor_all_guids_for_is_enabled_flag failed.");
             return;
-        },
+        }
     };
 
     let mut lock = guid_table.lock().unwrap();
@@ -306,7 +309,7 @@ fn check_etw_guids_for_tampering() {
             );
                 map_changed = true;
                 continue;
-            },
+            }
         };
 
         if item.1 != cache_item {
@@ -316,7 +319,7 @@ fn check_etw_guids_for_tampering() {
                 cache_item,
             );
             // Triggering a straight up bug-check here is bad as the mask seems to change naturally. More internals research would be needed to
-            // figure out in what circumstances this is being changed. Instead of a bug check - this would be a natural point to signal telemetry 
+            // figure out in what circumstances this is being changed. Instead of a bug check - this would be a natural point to signal telemetry
             // to the telemetry server for further processing / analyst alert.
         }
     }
@@ -404,7 +407,7 @@ struct EtwRegEntry {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct GuidEntry {
-    unused_0: ListEntry,
+    guid_list: ListEntry,
     unused_1: ListEntry,
     unused_2: i64,
     guid: GUID,
@@ -518,10 +521,10 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
 
     todo and then need to iterate over the structs from this para - note this is the 4 flags, NOT _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled (just 1 DWORD):
     Looking at the decompilation, there are two return 1 statements. Setting ProviderEnableInfo.IsEnabled to zero ensures that the first one is never reached.
-    However, the second return statement could still potentially execute. To make sure this doesn’t happen, the rootkit also iterates over all _ETW_REG_ENTRY 
-    structures from the _ETW_GUID_ENTRY.RegListHead linked list. For each of them, it makes a single doubleword write to zero out four masks, namely 
-    EnableMask, GroupEnableMask, HostEnableMask, and HostGroupEnableMask (or only EnableMask and GroupEnableMask on older builds, where the latter two masks 
-    were not yet introduced).  
+    However, the second return statement could still potentially execute. To make sure this doesn’t happen, the rootkit also iterates over all _ETW_REG_ENTRY
+    structures from the _ETW_GUID_ENTRY.RegListHead linked list. For each of them, it makes a single doubleword write to zero out four masks, namely
+    EnableMask, GroupEnableMask, HostEnableMask, and HostGroupEnableMask (or only EnableMask and GroupEnableMask on older builds, where the latter two masks
+    were not yet introduced).
 
     0: kd> dt nt!_ETW_GUID_ENTRY 0xffffaf8f6685f1d0
     +0x000 GuidList         : _LIST_ENTRY [ 0xffffaf8f`6f0c6320 - 0xffffaf8f`667ba8f0 ]
@@ -534,7 +537,7 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
     +0x050 MatchId          : 0xffffaf8f`6685f218
     +0x060 ProviderEnableInfo : _TRACE_ENABLE_INFO
     +0x080 EnableInfo       : [8] _TRACE_ENABLE_INFO
-    +0x180 FilterData       : (null) 
+    +0x180 FilterData       : (null)
     +0x188 SiloState        : 0xffffaf8f`6f0c2420 _ETW_SILODRIVERSTATE
     +0x190 HostEntry        : 0xffffaf8f`667b0b90 _ETW_GUID_ENTRY
     +0x198 Lock             : _EX_PUSH_LOCK
@@ -688,13 +691,87 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
             continue;
         }
 
-        let guid_entry = unsafe { &mut **hash_bucket_entry };
+        // `bucket_guid_entries` is a local cache used to gather the entries of the current bucket, before appending
+        // them to the master list.
+        let mut bucket_guid_entries: BTreeMap<String, u32> = BTreeMap::new();
 
-        result_map.insert(
-            guid_entry.guid.to_string(),
-            guid_entry.provider_enable_info.is_enabled,
+        // Look for other GUID entries under this bucket by traversing the linked list until we get back to
+        // the beginning
+        let guid_entry = unsafe { &mut **hash_bucket_entry };
+        println!(
+            "[sanctum] [i] Found GUID entry head with GUID: {}",
+            guid_entry.guid.to_string()
         );
+
+        bucket_guid_entries.insert(guid_entry.guid.to_string(), guid_entry.provider_enable_info.is_enabled);
+
+        let first_guid_entry = guid_entry.guid_list.flink as *const GuidEntry;
+        let mut current_guid_entry: *const GuidEntry = null();
+        while first_guid_entry != current_guid_entry {
+            // Assign the first guid to the current in the event its the first iteration, aka the current is
+            // null from the above initialisation.
+            if current_guid_entry.is_null() {
+                current_guid_entry = first_guid_entry;
+            }
+
+            if current_guid_entry.is_null() {
+                println!("[sanctum] [-] Current GUID entry is null, which is unexpected.");
+                break;
+            }
+
+            // SAFETY: Null pointer checked above
+            // Insert the GUID data into the BTreeMap
+            if let Err(m) = unsafe {
+                bucket_guid_entries.try_insert(
+                    (*current_guid_entry).guid.to_string(),
+                    (*current_guid_entry).provider_enable_info.is_enabled,
+                )
+            } {
+                // If we have a collision:
+                println!("[sanctum] [!] Collision detected whilst walking the local tree: {}, og val: {}, new val: {}",
+                    unsafe {(*current_guid_entry).guid.to_string()},
+                    unsafe {(*current_guid_entry).provider_enable_info.is_enabled},
+                    m.value,
+                );
+            }
+
+            // Walk to the next GUID item
+            // SAFETY: Null pointer dereference checked at the top of while loop
+            current_guid_entry =
+                unsafe { (*current_guid_entry).guid_list.flink as *const GuidEntry };
+        }
+
+        // println!(
+        //     "[sanctum] [+] Adding bucket_guid_entries (sz: {}) to result map (sz: {}).",
+        //     bucket_guid_entries.len(),
+        //     result_map.len()
+        // );
+
+        let mut i: usize = 0;
+        for item in bucket_guid_entries {
+            if let Err(m) = result_map.try_insert(item.0, item.1) {
+                println!("[sanctum [!!] Error whilst trying to join maps, key present. Key: {}, val in map: {}, new val: {}", m.entry.key(), m.value, item.1);
+                continue;
+            }
+
+            i += 1;
+        }
+
+        println!("[sanctum] [i] Inserted {i} unique elements.");
+
+        // result_map.append(&mut bucket_guid_entries);
     }
+
+    println!();
+    println!();
+    println!();
+    println!("Results of btreemap (sz: {}): ", result_map.len());
+    for item in &result_map {
+        println!("GUID: {}, Value: {}", item.0, item.1);
+    }
+
+
+    unsafe { asm!("int3") };
 
     Ok(result_map)
 }
