@@ -733,6 +733,9 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
                     unsafe {(*current_guid_entry).provider_enable_info.is_enabled},
                     m.value,
                 );
+
+                // todo remove this once happy we dont get collisions - i guess we shouldn't
+                unsafe { asm!("int3") };
             }
 
             // Walk to the next GUID item
@@ -741,37 +744,16 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
                 unsafe { (*current_guid_entry).guid_list.flink as *const GuidEntry };
         }
 
-        // println!(
-        //     "[sanctum] [+] Adding bucket_guid_entries (sz: {}) to result map (sz: {}).",
-        //     bucket_guid_entries.len(),
-        //     result_map.len()
-        // );
-
-        let mut i: usize = 0;
+        // Update the main BTreeMap via `try_insert` in an attempt to detect collisions - there shouldn't be any
         for item in bucket_guid_entries {
             if let Err(m) = result_map.try_insert(item.0, item.1) {
-                println!("[sanctum [!!] Error whilst trying to join maps, key present. Key: {}, val in map: {}, new val: {}", m.entry.key(), m.value, item.1);
+                println!("[sanctum] [!!] Error whilst trying to join maps, key present. Key: {}, val in map: {}, new val: {}", m.entry.key(), m.value, item.1);
+                // todo remove once happy no collisions
+                unsafe { asm!("int3") };
                 continue;
             }
-
-            i += 1;
         }
-
-        println!("[sanctum] [i] Inserted {i} unique elements.");
-
-        // result_map.append(&mut bucket_guid_entries);
     }
-
-    println!();
-    println!();
-    println!();
-    println!("Results of btreemap (sz: {}): ", result_map.len());
-    for item in &result_map {
-        println!("GUID: {}, Value: {}", item.0, item.1);
-    }
-
-
-    unsafe { asm!("int3") };
 
     Ok(result_map)
 }
