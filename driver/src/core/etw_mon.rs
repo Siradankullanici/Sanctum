@@ -330,11 +330,11 @@ fn check_etw_guids_for_tampering_is_enabled_field() {
         }
     }
 
-    // There was some discrepancy between the tables, whether an item missing, added, or value had changed - therefore we want 
+    // There was some discrepancy between the tables, whether an item missing, added, or value had changed - therefore we want
     // to update the master table inside the mutex so it reflects the current state - otherwise we will just keep reporting
     // the same change over and over.
     *lock = cache_guid_table;
- }
+}
 
 fn check_etw_system_logger_modification() {
     let bitmask_address: &FastMutex<(*const u32, u32)> =
@@ -592,8 +592,7 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
 
             // Walk to the next GUID item
             // SAFETY: Null pointer dereference checked at the top of while loop
-            current_guid_entry =
-                unsafe { (*current_guid_entry).guid_list.flink as *mut GuidEntry };
+            current_guid_entry = unsafe { (*current_guid_entry).guid_list.flink as *mut GuidEntry };
         }
     }
 
