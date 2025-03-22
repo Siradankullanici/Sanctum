@@ -83,7 +83,8 @@ fn monitor_etw_dispatch_table() -> Result<(), ()> {
         Err(_) => panic!("[sanctum] [-] Could not get the ETW Kernel table"),
     };
 
-    // use my `fast-mutex` crate to wrap the ETW table in a mutex and have it globally accessible
+    // use my `wdk-mutex` crate to wrap the ETW table in a mutex and have it globally accessible
+    // https://github.com/0xflux/wdk-mutex
     if let Err(e) = Grt::register_fast_mutex_checked("etw_table", table) {
         panic!("[sanctum] [-] wdk-mutex could not register new fast mutex for etw_table");
     }
