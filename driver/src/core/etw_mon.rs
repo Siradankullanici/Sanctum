@@ -313,11 +313,7 @@ fn check_etw_guids_for_tampering_is_enabled_field() {
     for item in lock.iter() {
         let cache_item = match cache_guid_table.get(item.0) {
             Some(c) => c,
-            None => {
-                // todo could this also be where guid needs inserting into the main table?
-                println!("[sanctum] [-] GUID no longer exists in the silo.");
-                continue;
-            }
+            None => continue,
         };
 
         if item.1 != cache_item {
