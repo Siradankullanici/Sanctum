@@ -2,7 +2,10 @@
 //! rootkits or kernel mode exploitation.
 
 use core::{
-    arch::asm, ffi::c_void, ptr::{null, null_mut}, time::Duration
+    arch::asm,
+    ffi::c_void,
+    ptr::{null, null_mut},
+    time::Duration,
 };
 
 use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
@@ -276,7 +279,7 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
         // Perform all check routines for ETW tampering
         check_etw_table_for_modification();
         check_etw_system_logger_modification();
-        check_etw_guids_for_tampering();
+        check_etw_guids_for_tampering_is_enabled_field();
 
         // Sleep until next  iteration
         let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut sleep_time);
@@ -285,7 +288,9 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
     let _ = unsafe { PsTerminateSystemThread(STATUS_SUCCESS) };
 }
 
-fn check_etw_guids_for_tampering() {
+/// Check ETW GUID entries in the silo for tampering with alterations to the IsEnabled field. This was employed by
+/// the Lazarus rootkit, FudModule.
+fn check_etw_guids_for_tampering_is_enabled_field() {
     let guid_table: &FastMutex<BTreeMap<String, u32>> =
         Grt::get_fast_mutex("etw_guid_table").expect("[sanctum] [-] Could not get etw_guid_table");
 
@@ -298,16 +303,18 @@ fn check_etw_guids_for_tampering() {
     };
 
     let mut lock = guid_table.lock().unwrap();
-    let mut map_changed: bool = false;
+
+    // check the integrity of the two tables against each other
+    if *lock == cache_guid_table {
+        return;
+    }
 
     for item in lock.iter() {
         let cache_item = match cache_guid_table.get(item.0) {
             Some(c) => c,
             None => {
-                println!("[sanctum] [-] Error looking up the key of cache_guid_table. Possible these things move around. GUID: {}",
-                item.0,
-            );
-                map_changed = true;
+                // todo could this also be where guid needs inserting into the main table?
+                println!("[sanctum] [-] GUID no longer exists in the silo.");
                 continue;
             }
         };
@@ -318,16 +325,16 @@ fn check_etw_guids_for_tampering() {
                 item.1,
                 cache_item,
             );
-            // Triggering a straight up bug-check here is bad as the mask seems to change naturally. More internals research would be needed to
-            // figure out in what circumstances this is being changed. Instead of a bug check - this would be a natural point to signal telemetry
-            // to the telemetry server for further processing / analyst alert.
+            // As per my blog post - dont bug check this one as there are **some** instances of the IsEnabled field changing organically
+            // (albeit seldom). Instead you should report this event for an analyst to review / threat hunt
         }
     }
 
-    if map_changed {
-        *lock = cache_guid_table;
-    }
-}
+    // There was some discrepancy between the tables, whether an item missing, added, or value had changed - therefore we want 
+    // to update the master table inside the mutex so it reflects the current state - otherwise we will just keep reporting
+    // the same change over and over.
+    *lock = cache_guid_table;
+ }
 
 fn check_etw_system_logger_modification() {
     let bitmask_address: &FastMutex<(*const u32, u32)> =
@@ -514,7 +521,7 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
 
     // SAFETY: Null pointer checked above
     let first_hash_address = &(unsafe { &**address }.guid_hash_table);
-    let mut result_map: BTreeMap<String, u32> = BTreeMap::new();
+    let mut bucket_guid_entries: BTreeMap<String, u32> = BTreeMap::new();
 
     /*
     todo these need enumerating as sub-lists for setting of _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled
@@ -525,159 +532,7 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
     structures from the _ETW_GUID_ENTRY.RegListHead linked list. For each of them, it makes a single doubleword write to zero out four masks, namely
     EnableMask, GroupEnableMask, HostEnableMask, and HostGroupEnableMask (or only EnableMask and GroupEnableMask on older builds, where the latter two masks
     were not yet introduced).
-
-    0: kd> dt nt!_ETW_GUID_ENTRY 0xffffaf8f6685f1d0
-    +0x000 GuidList         : _LIST_ENTRY [ 0xffffaf8f`6f0c6320 - 0xffffaf8f`667ba8f0 ]
-    +0x010 SiloGuidList     : _LIST_ENTRY [ 0xffffaf8f`6685f1e0 - 0xffffaf8f`6685f1e0 ]
-    +0x020 RefCount         : 0n-88444541472272
-    +0x028 Guid             : _GUID {6685f1f0-af8f-ffff-0000-000000000000}
-    +0x038 RegListHead      : _LIST_ENTRY [ 0xffffaf8f`6cf41a60 - 0xffffaf8f`66950ae0 ]
-    +0x048 SecurityDescriptor : 0xffffaf8f`6685f218 Void
-    +0x050 LastEnable       : _ETW_LAST_ENABLE_INFO
-    +0x050 MatchId          : 0xffffaf8f`6685f218
-    +0x060 ProviderEnableInfo : _TRACE_ENABLE_INFO
-    +0x080 EnableInfo       : [8] _TRACE_ENABLE_INFO
-    +0x180 FilterData       : (null)
-    +0x188 SiloState        : 0xffffaf8f`6f0c2420 _ETW_SILODRIVERSTATE
-    +0x190 HostEntry        : 0xffffaf8f`667b0b90 _ETW_GUID_ENTRY
-    +0x198 Lock             : _EX_PUSH_LOCK
-    +0x1a0 LockOwner        : 0xffffaf8f`6685f368 _ETHREAD
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 (*((ntkrnlmp!_GUID *)0xffffaf8f6685f1f8))
-    (*((ntkrnlmp!_GUID *)0xffffaf8f6685f1f8))                 : {6685F1F0-AF8F-FFFF-0000-000000000000} [Type: _GUID]
-        [<Raw View>]     [Type: _GUID]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 (*((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6685f1d0))
-    (*((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6685f1d0))                 [Type: _LIST_ENTRY]
-        [+0x000] Flink            : 0xffffaf8f6f0c6320 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f667ba8f0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6f0c6320)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6f0c6320)                 : 0xffffaf8f6f0c6320 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f698a8b40 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6685f1d0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f698a8b40)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f698a8b40)                 : 0xffffaf8f698a8b40 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6cf55560 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6f0c6320 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6cf55560)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6cf55560)                 : 0xffffaf8f6cf55560 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6cf4ee20 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f698a8b40 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6cf4ee20)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6cf4ee20)                 : 0xffffaf8f6cf4ee20 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f669fb220 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6cf55560 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f669fb220)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f669fb220)                 : 0xffffaf8f669fb220 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b370b20 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6cf4ee20 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b370b20)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b370b20)                 : 0xffffaf8f6b370b20 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b373a60 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f669fb220 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b373a60)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b373a60)                 : 0xffffaf8f6b373a60 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b3744e0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b370b20 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b3744e0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b3744e0)                 : 0xffffaf8f6b3744e0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b36b8e0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b373a60 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b36b8e0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b36b8e0)                 : 0xffffaf8f6b36b8e0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b3561e0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b3744e0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b3561e0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b3561e0)                 : 0xffffaf8f6b3561e0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6b358a20 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b36b8e0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b358a20)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6b358a20)                 : 0xffffaf8f6b358a20 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6989edc0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b3561e0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6989edc0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6989edc0)                 : 0xffffaf8f6989edc0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f698a0d40 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6b358a20 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f698a0d40)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f698a0d40)                 : 0xffffaf8f698a0d40 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f666dc0c0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6989edc0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666dc0c0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666dc0c0)                 : 0xffffaf8f666dc0c0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f666d5b40 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f698a0d40 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666d5b40)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666d5b40)                 : 0xffffaf8f666d5b40 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f666cd9c0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f666dc0c0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666cd9c0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f666cd9c0)                 : 0xffffaf8f666cd9c0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a82210 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f666d5b40 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a82210)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a82210)                 : 0xffffaf8f66a82210 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a81090 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f666cd9c0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a81090)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a81090)                 : 0xffffaf8f66a81090 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a7bad0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a82210 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a7bad0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a7bad0)                 : 0xffffaf8f66a7bad0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a7dc10 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a81090 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a7dc10)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a7dc10)                 : 0xffffaf8f66a7dc10 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a74e50 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a7bad0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a74e50)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a74e50)                 : 0xffffaf8f66a74e50 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a6f0d0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a7dc10 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a6f0d0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a6f0d0)                 : 0xffffaf8f66a6f0d0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a66850 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a74e50 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a66850)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a66850)                 : 0xffffaf8f66a66850 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a64710 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a6f0d0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a64710)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a64710)                 : 0xffffaf8f66a64710 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a16670 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a66850 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a16670)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a16670)                 : 0xffffaf8f66a16670 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a0a760 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a64710 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a0a760)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a0a760)                 : 0xffffaf8f66a0a760 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a08220 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a16670 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a08220)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a08220)                 : 0xffffaf8f66a08220 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f66a03020 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a0a760 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a03020)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f66a03020)                 : 0xffffaf8f66a03020 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f669fec60 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a08220 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f669fec60)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f669fec60)                 : 0xffffaf8f669fec60 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f667ba8f0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f66a03020 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f667ba8f0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f667ba8f0)                 : 0xffffaf8f667ba8f0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6685f1d0 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f669fec60 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6685f1d0)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6685f1d0)                 : 0xffffaf8f6685f1d0 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f6f0c6320 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f667ba8f0 [Type: _LIST_ENTRY *]
-    0: kd> dx -id 0,0,ffffaf8f6668e040 -r1 ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6f0c6320)
-    ((ntkrnlmp!_LIST_ENTRY *)0xffffaf8f6f0c6320)                 : 0xffffaf8f6f0c6320 [Type: _LIST_ENTRY *]
-        [+0x000] Flink            : 0xffffaf8f698a8b40 [Type: _LIST_ENTRY *]
-        [+0x008] Blink            : 0xffffaf8f6685f1d0 [Type: _LIST_ENTRY *]
-     */
+    */
     for i in 0..64 {
         let hash_bucket_entry =
             unsafe { first_hash_address.as_ptr().offset(i) } as *const *mut GuidEntry;
@@ -691,22 +546,17 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
             continue;
         }
 
-        // `bucket_guid_entries` is a local cache used to gather the entries of the current bucket, before appending
-        // them to the master list.
-        let mut bucket_guid_entries: BTreeMap<String, u32> = BTreeMap::new();
+        // Add the current outer entry to the map
+        let guid_entry = unsafe { &mut **hash_bucket_entry };
+        bucket_guid_entries.insert(
+            guid_entry.guid.to_string(),
+            guid_entry.provider_enable_info.is_enabled,
+        );
 
         // Look for other GUID entries under this bucket by traversing the linked list until we get back to
         // the beginning
-        let guid_entry = unsafe { &mut **hash_bucket_entry };
-        println!(
-            "[sanctum] [i] Found GUID entry head with GUID: {}",
-            guid_entry.guid.to_string()
-        );
-
-        bucket_guid_entries.insert(guid_entry.guid.to_string(), guid_entry.provider_enable_info.is_enabled);
-
-        let first_guid_entry = guid_entry.guid_list.flink as *const GuidEntry;
-        let mut current_guid_entry: *const GuidEntry = null();
+        let first_guid_entry = guid_entry.guid_list.flink as *mut GuidEntry;
+        let mut current_guid_entry: *mut GuidEntry = null_mut();
         while first_guid_entry != current_guid_entry {
             // Assign the first guid to the current in the event its the first iteration, aka the current is
             // null from the above initialisation.
@@ -727,35 +577,27 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
                     (*current_guid_entry).provider_enable_info.is_enabled,
                 )
             } {
-                // If we have a collision:
-                println!("[sanctum] [!] Collision detected whilst walking the local tree: {}, og val: {}, new val: {}",
-                    unsafe {(*current_guid_entry).guid.to_string()},
-                    unsafe {(*current_guid_entry).provider_enable_info.is_enabled},
-                    m.value,
-                );
-
-                // todo remove this once happy we dont get collisions - i guess we shouldn't
-                unsafe { asm!("int3") };
+                // SAFETY: Null ptr checked above
+                // If we have a collision & the value is different:
+                if unsafe { (*current_guid_entry).provider_enable_info.is_enabled } != m.value {
+                    println!("[sanctum] [!] Collision detected whilst walking the local tree with a different value: {}, og val: {}, new val: {}",
+                        unsafe {(*current_guid_entry).guid.to_string()},
+                        unsafe {(*current_guid_entry).provider_enable_info.is_enabled},
+                        m.value,
+                    );
+                    // todo remove this once happy we dont get collisions - i guess we shouldn't
+                    // unsafe { asm!("int3") };
+                }
             }
 
             // Walk to the next GUID item
             // SAFETY: Null pointer dereference checked at the top of while loop
             current_guid_entry =
-                unsafe { (*current_guid_entry).guid_list.flink as *const GuidEntry };
-        }
-
-        // Update the main BTreeMap via `try_insert` in an attempt to detect collisions - there shouldn't be any
-        for item in bucket_guid_entries {
-            if let Err(m) = result_map.try_insert(item.0, item.1) {
-                println!("[sanctum] [!!] Error whilst trying to join maps, key present. Key: {}, val in map: {}, new val: {}", m.entry.key(), m.value, item.1);
-                // todo remove once happy no collisions
-                unsafe { asm!("int3") };
-                continue;
-            }
+                unsafe { (*current_guid_entry).guid_list.flink as *mut GuidEntry };
         }
     }
 
-    Ok(result_map)
+    Ok(bucket_guid_entries)
 }
 
 /// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_SILODRIVERSTATE
