@@ -73,7 +73,7 @@ pub unsafe extern "C" fn process_create_callback(
                 size_of::<ProcessLoggingInformation>() as _,
             )
         };
-        println!("RESULT OF ZwSetInformationProcess: {}", result);
+        // println!("RESULT OF ZwSetInformationProcess: {}", result);
 
         // todo if image name is malware, here we need to instruct the DLL to be inserted
 
@@ -98,7 +98,7 @@ pub unsafe extern "C" fn process_create_callback(
         let pid = pid as u64;
         let process_terminated = ProcessTerminated { pid };
 
-        println!("[sanctum] [-] Process terminated, {:?}", process_terminated);
+        // println!("[sanctum] [-] Process terminated, {:?}", process_terminated);
 
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,
         // add the relevant data to the queue

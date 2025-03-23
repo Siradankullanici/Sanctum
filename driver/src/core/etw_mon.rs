@@ -2,15 +2,19 @@
 //! rootkits or kernel mode exploitation.
 
 use core::{
-    arch::asm,
     ffi::c_void,
-    ptr::{null, null_mut},
+    ptr::null_mut,
     time::Duration,
 };
 
-use alloc::{collections::btree_map::BTreeMap, format, string::String, vec::Vec};
+use alloc::{
+    collections::btree_map::BTreeMap,
+    format,
+    string::String,
+    vec::Vec,
+};
 use wdk::println;
-use wdk_mutex::{fast_mutex::FastMutex, grt::Grt};
+use wdk_mutex::{fast_mutex::{FastMutex, FastMutexGuard}, grt::Grt};
 use wdk_sys::{
     ntddk::{
         KeBugCheckEx, KeDelayExecutionThread, MmGetSystemRoutineAddress, ObReferenceObjectByHandle,
@@ -23,7 +27,7 @@ use wdk_sys::{
 /// Entrypoint for monitoring kernel ETW structures to detect rootkits or other ETW manipulation
 pub fn monitor_kernel_etw() {
     // Call the functions
-    let guid_map = monitor_all_guids_for_is_enabled_flag()
+    let guid_map = traverse_guid_tables_for_etw_monitoring_data()
         .expect("[sanctum] [-] Failed to start the monitoring of guid enabled mask");
     monitor_etw_dispatch_table()
         .expect("[sanctum] [-] Failed to start the monitoring of ETW Table");
@@ -32,8 +36,11 @@ pub fn monitor_kernel_etw() {
 
     // Add any returned maps to the Grt for mutex use - it's possible some functions don't expose their maps
     // and implement them internally, that is fine.
-    Grt::register_fast_mutex("etw_guid_table", guid_map)
+    Grt::register_fast_mutex("etw_guid_table", guid_map.0)
         .expect("[sanctum] [-] Could not register wdk-mutex for etw_guid_table");
+
+    Grt::register_fast_mutex("etw_guid_reg_entry_mask", guid_map.1)
+        .expect("[sanctum] [-] Could not register wdk-mutex for etw_guid_reg_entry_mask");
 
     // Start the thread that will monitor for changes
     let mut thread_handle: HANDLE = null_mut();
@@ -196,7 +203,7 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
     // The remainder can be calculated based off of pre-determined in memory offsets from EtwpPsProvRegHandle
 
     dispatch_table.insert("EtwpFileProvRegHandle", unsafe {
-        etwp_event_tracing_prov_reg_handle.add(8 * 1)
+        etwp_event_tracing_prov_reg_handle.add(8)
     });
     dispatch_table.insert("EtwpDiskProvRegHandle", unsafe {
         etwp_event_tracing_prov_reg_handle.sub(0x30)
@@ -239,8 +246,7 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
 
             // SAFETY: Pointer dereference checked above
             let etw_reg_entry: &EtwRegEntry = unsafe { &*inner_ptr };
-            let actual_guid_entry: *const GuidEntry =
-                etw_reg_entry.p_guid_entry as *const GuidEntry;
+            let actual_guid_entry: *const GuidEntry = etw_reg_entry.p_guid_entry;
             if actual_guid_entry.is_null() {
                 println!(
                     "[sanctum] [!] Symbol {}: p_guid_entry is null, this is indicative of tampering.",
@@ -262,16 +268,25 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
 /// - ETW Kernel Dispatch Table
 /// - Disabling global active system loggers
 unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
-    let delay_as_duration = Duration::from_micros(1);
-    let mut sleep_time = LARGE_INTEGER {
+    let delay_as_duration = Duration::from_micros(150);
+    let mut thread_sleep_time = LARGE_INTEGER {
         QuadPart: -((delay_as_duration.as_nanos() / 100) as i64),
     };
 
     loop {
+        let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut thread_sleep_time);
+
         // Check if we have received the cancellation flag, without this check we will get a BSOD. This flag will be
         // set to true on DriverExit.
-        let terminate_flag_lock = Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR")
-            .expect("[sanctum] [-] Could not find TERMINATION_FLAG_ETW_MONITOR");
+        let terminate_flag_lock: &FastMutex<bool> = match Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR") {
+            Ok(lock) => lock,
+            Err(e) => {
+                // Maybe this should terminate the thread instead? This would be a bad error to have as it means we cannot. 
+                // instruct the thread to terminate cleanly on driver exit. Or maybe do a count with max tries? We shall see.
+                println!("[sanctum] [-] Error getting fast mutex for TERMINATION_FLAG_ETW_MONITOR. {:?}", e);
+                continue;
+            },
+        };
         let lock = terminate_flag_lock.lock().unwrap();
         if *lock {
             break;
@@ -281,21 +296,31 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
         check_etw_table_for_modification();
         check_etw_system_logger_modification();
         check_etw_guids_for_tampering_is_enabled_field();
-
-        // Sleep until next  iteration
-        let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut sleep_time);
     }
 
     let _ = unsafe { PsTerminateSystemThread(STATUS_SUCCESS) };
 }
 
-/// Check ETW GUID entries in the silo for tampering with alterations to the IsEnabled field. This was employed by
-/// the Lazarus rootkit, FudModule.
+/// This function performs two separate checks, due to the lookup mechanism, it's more performant to check the results both in
+/// the same function here.
+///
+/// This function will check 2 things:
+///
+/// 1) Check `_ETW_GUID_ENTRY` entries in the silo for tampering with alterations to the `IsEnabled` field. This was employed by
+///   the Lazarus rootkit, FudModule.
+///
+/// 2) Check the `_ETW_REG_ENTRY` of the `_ETW_GUID_ENTRY` for modification to the masks.
 fn check_etw_guids_for_tampering_is_enabled_field() {
-    let guid_table: &FastMutex<BTreeMap<String, u32>> =
-        Grt::get_fast_mutex("etw_guid_table").expect("[sanctum] [-] Could not get etw_guid_table");
+    // First check integrity of the GUID table IsEnabled
+    let guid_table: &FastMutex<BTreeMap<String, u32>> = match Grt::get_fast_mutex("etw_guid_table") {
+        Ok(table) => table,
+        Err(e) => {
+            println!("[sanctum] [-] Could not get etw_guid_table. {:?}", e);
+            return;
+        },
+    };
 
-    let cache_guid_table = match monitor_all_guids_for_is_enabled_flag() {
+    let snapshot_etw_monitoring_data = match traverse_guid_tables_for_etw_monitoring_data() {
         Ok(c) => c,
         Err(_) => {
             println!("[sanctum] [-] Call to monitor_all_guids_for_is_enabled_flag failed.");
@@ -303,43 +328,123 @@ fn check_etw_guids_for_tampering_is_enabled_field() {
         }
     };
 
-    let mut lock = guid_table.lock().unwrap();
+    let snapshot_guid_table = snapshot_etw_monitoring_data.0;
+
+    let mut lock = match guid_table.lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            println!("[sanctum] [-] Could not lock etw_guid_table. {:?}", e);
+            return;
+        },
+    };
 
     // check the integrity of the two tables against each other
-    if *lock == cache_guid_table {
-        return;
+    if *lock != snapshot_guid_table {
+        for item in lock.iter() {
+            let cache_item = match snapshot_guid_table.get(item.0) {
+                Some(c) => c,
+                None => continue,
+            };
+
+            if item.1 != cache_item {
+                println!("[sanctum] [TAMPERING] Tampering detected on the GUID table. Mismatch on: {}, OG: {}, Local: {}",
+                    item.0,
+                    item.1,
+                    cache_item,
+                );
+                // As per my blog post - dont bug check this one as there are **some** instances of the IsEnabled field changing organically
+                // (albeit seldom). Instead you should report this event for an analyst to review / threat hunt.
+                // For the POC we will just log a message to the debugger.
+            }
+        }
+        // There was some discrepancy between the tables, whether an item missing, added, or value had changed - therefore we want
+        // to update the master table inside the mutex so it reflects the current state - otherwise we will just keep reporting
+        // the same change over and over.
+        *lock = snapshot_guid_table;
     }
 
-    for item in lock.iter() {
-        let cache_item = match cache_guid_table.get(item.0) {
-            Some(c) => c,
-            None => continue,
+    drop(lock);
+
+    // Now check for modification to the masks at `_ETW_REG_ENTRY`
+    let baseline_reg_masks: &FastMutex<RegEntryEtwMaskBTreeMap> = match Grt::get_fast_mutex("etw_guid_reg_entry_mask") {
+            Ok(fm) => fm,
+            Err(e) => {
+                println!("[sanctum] [-] Could not get wdk-mutex for etw_guid_reg_entry_mask. {:?}", e);
+                return;
+            },
         };
 
-        if item.1 != cache_item {
-            println!("[sanctum] [TAMPERING] Tampering detected on the GUID table. Mismatch on: {}, OG: {}, Local: {}",
-                item.0,
-                item.1,
-                cache_item,
-            );
-            // As per my blog post - dont bug check this one as there are **some** instances of the IsEnabled field changing organically
-            // (albeit seldom). Instead you should report this event for an analyst to review / threat hunt
+    let snapshot_reg_masks = snapshot_etw_monitoring_data.1;
+    let mut lock = match baseline_reg_masks.lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            println!("[sanctum] [-] Could not lock etw_guid_reg_entry_mask. {:?}.", e);
+            return;
+        },
+    };
+
+    // We have a BTreeMap in a BTreeMap containing the _ETW_REG_ENTRY data that we are monitoring for changes.
+    // I've tried to make this intentionally more efficient than comparing the maps and then iterating if there was a difference
+    // owing to the comparison being the same cost as the iteration that would have been done if they were different.
+    // Loop through the snapshot
+    let mut snapshot_differs = false;
+    for (guid, snapshot_inner) in &snapshot_reg_masks {
+        match lock.get(guid) {
+            Some(baseline_inner) => {
+                // Compare the inner maps for each key (memory address of the _ETW_REG_ENTRY)
+                for (address, snapshot_mask) in snapshot_inner {
+                    // We only care if the new mask is 0, i.e. its been unset
+                    // The disas shows the kernel will still match on any value other than 0 (bool check)
+                    if *snapshot_mask > 1 {
+                        continue;
+                    }
+
+                    // Look for the address of the _ETW_REG_ENTRY itself so we can access the mask
+                    match baseline_inner.get(address) {
+                        Some(baseline_mask) => {
+                            if baseline_mask != snapshot_mask {
+                                println!(
+                                    "[sanctum] [TAMPERING] Tampering detected on the group enable mask ETW kernel structure. GUID: {}, Original mask: {}, new mask: {}",
+                                    guid,
+                                    baseline_mask,
+                                    snapshot_mask,
+                                );
+                            }
+                        }
+                        None => snapshot_differs = true,
+                    }
+                }
+            }
+
+            // There's no evidence of tampering at this point, and is to be expected
+            None => snapshot_differs = true,
         }
     }
 
-    // There was some discrepancy between the tables, whether an item missing, added, or value had changed - therefore we want
-    // to update the master table inside the mutex so it reflects the current state - otherwise we will just keep reporting
-    // the same change over and over.
-    *lock = cache_guid_table;
+    if snapshot_differs {
+        // Seeing as the maps are different, save the cached copy as the new authoritative version
+        *lock = snapshot_reg_masks;
+    }
 }
 
 fn check_etw_system_logger_modification() {
-    let bitmask_address: &FastMutex<(*const u32, u32)> =
-        Grt::get_fast_mutex("system_logger_bitmask_addr")
-            .expect("[sanctum] [-] Could not get system_logger_bitmask_addr from Grt.");
-    let mut lock = bitmask_address.lock().unwrap();
+    let bitmask_address: &FastMutex<(*const u32, u32)> = match Grt::get_fast_mutex("system_logger_bitmask_addr") {
+        Ok(fm) => fm,
+        Err(e) => {
+            println!("[sanctum] [-] Could not get system_logger_bitmask_addr from Grt. {:?}", e);
+            return;
+        },
+    };
 
-    if (*lock).0.is_null() {
+    let mut lock = match bitmask_address.lock() {
+        Ok(lock) => lock,
+        Err(e) => {
+            println!("[sanctum] [-] Could not lock system_logger_bitmask_addr. {:?}", e);
+            return;
+        },
+    };
+
+    if lock.0.is_null() {
         println!("[sanctum] [-] system_logger_bitmask_addr bitmask was null, this is unexpected.");
         return;
     }
@@ -386,9 +491,20 @@ fn check_etw_table_for_modification() {
         },
     };
 
-    let table: &FastMutex<BTreeMap<&str, *const c_void>> = Grt::get_fast_mutex("etw_table")
-        .expect("[sanctum] [-] Could not get fast mutex for etw_table");
-    let table_lock = table.lock().unwrap();
+    let table: &FastMutex<BTreeMap<&str, *const c_void>> = match Grt::get_fast_mutex("etw_table") {
+        Ok(table) => table,
+        Err(e) => {
+            println!("[sanctum] [-] Could not get fast mutex for etw_table. {:?}", e);
+            return;
+        },
+    };
+    let table_lock: FastMutexGuard<'_, BTreeMap<&str, *const c_void>> = match table.lock() {
+        Ok(l) => l,
+        Err(e) => {
+            println!("[sanctum] [-] Could not get Mutex Guard for etw_table. {:?}", e);
+            return;
+        }
+    };
 
     if table_live_read != *table_lock {
         // As above - this should shoot some telemetry off in a real world EDR
@@ -401,10 +517,14 @@ fn check_etw_table_for_modification() {
 #[repr(C)]
 #[derive(Copy, Clone, Debug, Eq, PartialEq)]
 struct EtwRegEntry {
-    unused_0: ListEntry,
+    reg_list: ListEntry,
     unused_1: ListEntry,
     p_guid_entry: *const GuidEntry,
-    // we dont care about the rest of the fields
+    unused: [u8; 0x3C],
+    mask_enable: u8,
+    mask_group_enable: u8,
+    mask_host_enable: u8,
+    mask_host_group_enable: u8,
 }
 
 /// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_GUID_ENTRY
@@ -415,8 +535,11 @@ struct GuidEntry {
     unused_1: ListEntry,
     unused_2: i64,
     guid: GUID,
-    unused_3: [u8; 0x28],
+    reg_list_head: ListEntry,
+    unused_3: [u8; 0x18],
     provider_enable_info: TraceEnableInfo,
+    unused_4: [u8; 0x120],
+    silo_state: *const c_void,
 }
 
 #[repr(C)]
@@ -471,9 +594,13 @@ enum EtwMonitorError {
 ///
 /// This function monitors abuse of teh _ETW_SILODRIVERSTATE.SystemLoggerSettings.EtwpActiveSystemLoggers bitmask.
 fn monitor_system_logger_bitmask() -> Result<(), ()> {
-    let address = resolve_relative_symbol_offset("EtwSendTraceBuffer", 78)
-        .expect("[sanctum] [-] Unable to resolve function EtwSendTraceBuffer")
-        as *const *const EtwSiloDriverState;
+    let address: *const *const EtwSiloDriverState = match resolve_relative_symbol_offset("EtwSendTraceBuffer", 78) {
+        Ok(a) => a as *const *const EtwSiloDriverState,
+        Err(e) => {
+            println!("[sanctum] [-] Unable to resolve function EtwSendTraceBuffer. {:?}", e);
+            return Err(());
+        },
+    };
 
     if address.is_null() {
         println!("[sanctum] [-] Pointer to EtwSiloDriverState is null");
@@ -500,10 +627,21 @@ fn monitor_system_logger_bitmask() -> Result<(), ()> {
     Ok(())
 }
 
-fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> {
-    let address = resolve_relative_symbol_offset("EtwSendTraceBuffer", 78)
-        .expect("[sanctum] [-] Unable to resolve function EtwSendTraceBuffer")
-        as *const *const EtwSiloDriverState;
+/// Gets the address of the current Silo _ETW_SILODRIVERSTATE structure.
+///
+/// # Returns
+///
+/// - Ok: Will return a pointer to the _ETW_SILODRIVERSTATE structure. This function guarantees dereferencing the pointer to _ETW_SILODRIVERSTATE
+///   will be safe.
+/// - Err: Unit type - check the debug logs for more info
+fn get_silo_etw_struct_address() -> Result<*const EtwSiloDriverState, ()> {
+    let address: *const *const EtwSiloDriverState = match resolve_relative_symbol_offset("EtwSendTraceBuffer", 78) {
+        Ok(a) => a as *const *const EtwSiloDriverState,
+        Err(e) => {
+            println!("[sanctum] [-] Unable to resolve function EtwSendTraceBuffer. {:?}", e);
+            return Err(());
+        },
+    };
 
     if address.is_null() {
         println!("[sanctum] [-] Pointer to EtwSiloDriverState is null");
@@ -516,20 +654,17 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
         return Err(());
     }
 
-    // SAFETY: Null pointer checked above
-    let first_hash_address = &(unsafe { &**address }.guid_hash_table);
+    Ok(unsafe { *address })
+}
+
+fn traverse_guid_tables_for_etw_monitoring_data(
+) -> Result<(BTreeMap<String, u32>, RegEntryEtwMaskBTreeMap), ()> {
+    let silo_driver_state_raw_ptr = get_silo_etw_struct_address()?;
+    // SAFETY: Null pointer is checked inside of get_silo_etw_struct_address
+    let first_hash_address = &(unsafe { &*silo_driver_state_raw_ptr }.guid_hash_table);
     let mut bucket_guid_entries: BTreeMap<String, u32> = BTreeMap::new();
+    let mut bucket_guid_reg_masks: RegEntryEtwMaskBTreeMap = BTreeMap::new();
 
-    /*
-    todo these need enumerating as sub-lists for setting of _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled
-
-    todo and then need to iterate over the structs from this para - note this is the 4 flags, NOT _ETW_GUID_ENTRY.ProviderEnableInfo.IsEnabled (just 1 DWORD):
-    Looking at the decompilation, there are two return 1 statements. Setting ProviderEnableInfo.IsEnabled to zero ensures that the first one is never reached.
-    However, the second return statement could still potentially execute. To make sure this doesn’t happen, the rootkit also iterates over all _ETW_REG_ENTRY
-    structures from the _ETW_GUID_ENTRY.RegListHead linked list. For each of them, it makes a single doubleword write to zero out four masks, namely
-    EnableMask, GroupEnableMask, HostEnableMask, and HostGroupEnableMask (or only EnableMask and GroupEnableMask on older builds, where the latter two masks
-    were not yet introduced).
-    */
     for i in 0..64 {
         let hash_bucket_entry =
             unsafe { first_hash_address.as_ptr().offset(i) } as *const *mut GuidEntry;
@@ -566,26 +701,38 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
                 break;
             }
 
-            // SAFETY: Null pointer checked above
-            // Insert the GUID data into the BTreeMap
-            if let Err(m) = unsafe {
-                bucket_guid_entries.try_insert(
-                    (*current_guid_entry).guid.to_string(),
-                    (*current_guid_entry).provider_enable_info.is_enabled,
-                )
-            } {
-                // SAFETY: Null ptr checked above
-                // If we have a collision & the value is different:
-                if unsafe { (*current_guid_entry).provider_enable_info.is_enabled } != m.value {
-                    println!("[sanctum] [!] Collision detected whilst walking the local tree with a different value: {}, og val: {}, new val: {}",
-                        unsafe {(*current_guid_entry).guid.to_string()},
-                        unsafe {(*current_guid_entry).provider_enable_info.is_enabled},
-                        m.value,
-                    );
-                    // todo remove this once happy we dont get collisions - i guess we shouldn't
-                    // unsafe { asm!("int3") };
+            // Occasionally the GUID entry is invalid - leading to what appears to be a malformed GUID (with no references on Google)
+            // and a wildly negative Reference Count, which obviously defeats the purpose of reference counting.
+            // We can identify these from entries which have a null silo state pointer; it is unclear **why** these malformed entries
+            // exist; but given no pointer to the silo state, we can assume this is a purposeful action by the kernel.
+            unsafe {
+                if (*(current_guid_entry)).silo_state.is_null() {
+                    current_guid_entry = (*current_guid_entry).guid_list.flink as *mut GuidEntry;
+                    continue;
                 }
             }
+
+            let guid_string = unsafe { (*current_guid_entry).guid.to_string() };
+            if let Ok(result) =
+                unsafe { populate_all_etw_reg_entry_masks(current_guid_entry, guid_string) }
+            {
+                for item in result {
+                    if let Err(mut entry) = bucket_guid_reg_masks.try_insert(item.0, item.1.clone())
+                    {
+                        let mut_entry = entry.entry.get_mut();
+                        for row in item.1 {
+                            mut_entry.insert(row.0, row.1);
+                        }
+                    }
+                }
+            }
+
+            let _ = unsafe {
+                bucket_guid_entries.insert(
+                    (*current_guid_entry).guid.to_string().to_ascii_uppercase(),
+                    (*current_guid_entry).provider_enable_info.is_enabled,
+                )
+            };
 
             // Walk to the next GUID item
             // SAFETY: Null pointer dereference checked at the top of while loop
@@ -593,7 +740,69 @@ fn monitor_all_guids_for_is_enabled_flag() -> Result<BTreeMap<String, u32>, ()> 
         }
     }
 
-    Ok(bucket_guid_entries)
+    Ok((bucket_guid_entries, bucket_guid_reg_masks))
+}
+
+type RegEntryEtwMaskBTreeMap = BTreeMap<String, BTreeMap<usize, u8>>;
+
+unsafe fn populate_all_etw_reg_entry_masks(
+    guid_entry: *const GuidEntry,
+    guid_name: String,
+) -> Result<RegEntryEtwMaskBTreeMap, ()> {
+    let mut etw_reg_entry_dword_masks: RegEntryEtwMaskBTreeMap = BTreeMap::new();
+
+    // We now need to traverse the _ETW_REG_ENTRY linked list for the relevant DWORD field to monitor for tampering
+    let first_reg_entry = (*(guid_entry)).reg_list_head.flink as *const EtwRegEntry;
+
+    let mut current_reg_entry: *const EtwRegEntry = null_mut();
+    while first_reg_entry != current_reg_entry {
+        // Assign the first _ETW_REG_ENTRY to the current in the event its the first iteration, aka the current is
+        // null from the above initialisation.
+        if current_reg_entry.is_null() {
+            current_reg_entry = first_reg_entry;
+        }
+
+        if current_reg_entry.is_null() {
+            println!("[sanctum] [-] Current _ETW_REG_ENTRY entry is null, which is unexpected.");
+            break;
+        }
+
+        if (*(current_reg_entry)).reg_list.flink.is_null()
+            || (*(current_reg_entry)).reg_list.blink.is_null()
+        {
+            println!(
+                "[sanctum] [i] Flink for next reg list item is null in _ETW_REG_ENTRY: {:p}",
+                current_reg_entry
+            );
+            break;
+        }
+
+        // SAFETY: Null pointer checked above
+        // Insert the data data into the results> Essentially, what is going on here is we want to index the BTreeMap by the GUID string.
+        // However, if we keep inserting by GUID we will just overwrite the map, which we dont want to do. Instead, we want to insert a new
+        // BTreeMap if the GUID is present, where the inner BTreeMap contains the address of the reg entry, and the flag value.
+        let mut tmp: BTreeMap<usize, u8> = BTreeMap::new();
+        tmp.insert(
+            current_reg_entry as usize,
+            (*current_reg_entry).mask_group_enable,
+        );
+
+        if let Err(mut e) =
+            etw_reg_entry_dword_masks.try_insert(guid_name.to_ascii_uppercase().clone(), tmp)
+        {
+            let entry = e.entry.get_mut();
+            entry.insert(
+                current_reg_entry as usize,
+                (*current_reg_entry).mask_group_enable,
+            );
+        }
+
+        // Walk to the next _ETW_REG_ENTRY item
+        // SAFETY: Null pointer dereference checked at the top of while loop
+        current_reg_entry = (*current_reg_entry).reg_list.flink as *const _;
+    }
+
+    Ok(etw_reg_entry_dword_masks)
 }
 
 /// https://www.vergiliusproject.com/kernels/x64/windows-11/24h2/_ETW_SILODRIVERSTATE
