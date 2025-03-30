@@ -7,9 +7,10 @@ edition = "2021"
 serde = { version = "1.0.215", features = ["derive"] }
 serde_json = { version = "1.0.133", default-features = false, features = ["alloc"] }
 shared_no_std = { path = "../shared_no_std" }
-windows = {version = "0.60.0", features = [
+windows = {version = "0.61.1", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Authorization",
     "Win32_System_Pipes",
+    "Win32_System_SystemServices",
 ]}
