@@ -4,29 +4,57 @@
 //      GH: https://github.com/0xflux
 //      Blog: https://fluxsec.red/
 
+#![feature(map_try_insert)]
 #![no_std]
 extern crate alloc;
 
 #[cfg(not(test))]
 extern crate wdk_panic;
 
-use core::{processes::{process_create_callback, ProcessHandleCallback}, threads::{set_thread_creation_callback, thread_callback}};
-use ::core::{ffi::c_void, ptr::null_mut, sync::atomic::{AtomicPtr, Ordering}};
-use alloc::{boxed::Box, format};
+use ::core::{
+    ffi::c_void,
+    iter::once,
+    ptr::null_mut,
+    sync::atomic::{AtomicPtr, Ordering},
+};
+use alloc::{boxed::Box, format, vec::Vec};
+use core::{
+    etw_mon::monitor_kernel_etw, processes::{process_create_callback, ProcessHandleCallback}, registry::{enable_registry_monitoring, unregister_registry_monitor}, threads::{set_thread_creation_callback, thread_callback}
+};
+use device_comms::{
+    ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping,
+    ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland,
+    DriverMessagesWithMutex,
+};
 use ffi::IoGetCurrentIrpStackLocation;
-use device_comms::{ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex};
-use shared_no_std::{constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER}, ioctl::{SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT}};
-use utils::{Log, LogLevel, ToU16Vec};
+use shared_no_std::{
+    constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
+    ioctl::{
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGES,
+        SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
+    },
+};
+use utils::{Log, LogLevel};
 use wdk::{nt_success, println};
-use wdk_mutex::{grt::Grt, kmutex::KMutex};
+use wdk_mutex::{fast_mutex::FastMutex, grt::Grt, kmutex::KMutex};
 use wdk_sys::{
-    ntddk::{IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, ObUnRegisterCallbacks, PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, PsSetCreateThreadNotifyRoutineEx, RtlInitUnicodeString}, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION
+    ntddk::{
+        IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink,
+        IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject,
+        PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString,
+    },
+    DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN,
+    FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL,
+    NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS,
+    STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION,
+    _KWAIT_REASON::Executive,
+    _MODE::KernelMode,
 };
 
+mod core;
+mod device_comms;
 mod ffi;
 mod utils;
-mod device_comms;
-mod core;
 
 use wdk_alloc::WdkAllocator;
 #[global_allocator]
@@ -38,7 +66,7 @@ static GLOBAL_ALLOCATOR: WdkAllocator = WdkAllocator;
 // wont ensure certain parts of memory isn't deallocated.
 //
 
-/// An atomic pointer to the DriverMessagesWithSpinLock struct so that it can be used anywhere in the 
+/// An atomic pointer to the DriverMessagesWithSpinLock struct so that it can be used anywhere in the
 /// kernel.
 static DRIVER_MESSAGES: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
 static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::new(null_mut());
@@ -57,7 +85,10 @@ pub unsafe extern "system" fn driver_entry(
     driver: &mut DRIVER_OBJECT,
     registry_path: PCUNICODE_STRING,
 ) -> NTSTATUS {
-    println!("[sanctum] [i] Starting Sanctum driver... Version: {}", VERSION_DRIVER);
+    println!(
+        "[sanctum] [i] Starting Sanctum driver... Version: {}",
+        VERSION_DRIVER
+    );
 
     if let Err(e) = Grt::init() {
         println!("Error creating Grt!: {:?}", e);
@@ -66,9 +97,10 @@ pub unsafe extern "system" fn driver_entry(
 
     let status = configure_driver(driver, registry_path as *mut _);
 
+    monitor_kernel_etw();
+    
     status
 }
-
 
 /// This deals with setting up the driver and any callbacks / configurations required
 /// for its operation and lifetime.
@@ -85,13 +117,15 @@ pub unsafe extern "C" fn configure_driver(
     //
     let messages = Box::new(DriverMessagesWithMutex::new());
     let messages_cache = Box::new(DriverMessagesWithMutex::new());
-    // take ownership of the pointer to the messages struct; the pointer shouldn't change as the 
+    // take ownership of the pointer to the messages struct; the pointer shouldn't change as the
     // struct contains a pointer to the vec, that is allowed to change.
     DRIVER_MESSAGES.store(Box::into_raw(messages), Ordering::SeqCst);
     DRIVER_MESSAGES_CACHE.store(Box::into_raw(messages_cache), Ordering::SeqCst);
 
-
-    log.log_to_userland(format!("Starting Sanctum driver... Version: {}", VERSION_DRIVER));
+    log.log_to_userland(format!(
+        "Starting Sanctum driver... Version: {}",
+        VERSION_DRIVER
+    ));
 
     //
     // Configure the strings required for symbolic links and naming
@@ -99,18 +133,17 @@ pub unsafe extern "C" fn configure_driver(
     let mut dos_name = UNICODE_STRING::default();
     let mut nt_name = UNICODE_STRING::default();
 
-    let dos_name_u16 = DOS_DEVICE_NAME.to_u16_vec();
-    let device_name_u16 = NT_DEVICE_NAME.to_u16_vec();
-    
+    let dos_name_u16: Vec<u16> = DOS_DEVICE_NAME.encode_utf16().chain(once(0)).collect();
+    let device_name_u16: Vec<u16> = NT_DEVICE_NAME.encode_utf16().chain(once(0)).collect();
+
     RtlInitUnicodeString(&mut dos_name, dos_name_u16.as_ptr());
     RtlInitUnicodeString(&mut nt_name, device_name_u16.as_ptr());
-
 
     //
     // Create the device
     //
     let mut device_object: PDEVICE_OBJECT = null_mut();
-    
+
     let res = IoCreateDevice(
         driver,
         size_of::<DeviceContext>() as u32,
@@ -121,7 +154,9 @@ pub unsafe extern "C" fn configure_driver(
         &mut device_object,
     );
     if !nt_success(res) {
-        println!("[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}.");
+        println!(
+            "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
+        );
         return res;
     }
 
@@ -135,7 +170,6 @@ pub unsafe extern "C" fn configure_driver(
 
     // // store the device context in the global
     // DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
-    
 
     //
     // Create the symbolic link
@@ -148,7 +182,6 @@ pub unsafe extern "C" fn configure_driver(
         return STATUS_UNSUCCESSFUL;
     }
 
-
     //
     // Configure the drivers general callbacks
     //
@@ -157,11 +190,15 @@ pub unsafe extern "C" fn configure_driver(
     // (*driver).MajorFunction[IRP_MJ_WRITE as usize] = Some(handle_ioctl);
     (*driver).MajorFunction[IRP_MJ_DEVICE_CONTROL as usize] = Some(handle_ioctl);
     (*driver).DriverUnload = Some(driver_exit);
-    
 
     //
     // Core callback functions for the EDR
     //
+
+    // Registry callbacks
+    if let Err(code) = enable_registry_monitoring(driver as _) {
+        return code;
+    }
 
     // Thread interception
     set_thread_creation_callback();
@@ -169,7 +206,9 @@ pub unsafe extern "C" fn configure_driver(
     // Intercepting process creation
     let res = PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8);
     if res != STATUS_SUCCESS {
-        println!("[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}.");
+        println!(
+            "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
+        );
         return res;
     }
 
@@ -184,29 +223,30 @@ pub unsafe extern "C" fn configure_driver(
     STATUS_SUCCESS
 }
 
-
 /// Driver unload functions when it is to exit.
 ///
 /// # Safety
 ///
 /// This function makes use of unsafe code.
 extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
-
     // rm symbolic link
     let mut dos_name = UNICODE_STRING::default();
-    let dos_name_u16 = DOS_DEVICE_NAME.to_u16_vec();
+    let dos_name_u16: Vec<u16> = DOS_DEVICE_NAME.encode_utf16().chain(once(0)).collect();
     unsafe {
         RtlInitUnicodeString(&mut dos_name, dos_name_u16.as_ptr());
     }
     let _ = unsafe { IoDeleteSymbolicLink(&mut dos_name) };
 
+    //
+    // Unregister callback routines
+    //
 
-    //
-    // Unregister callback routines 
-    //
+    // registry
+    unsafe { unregister_registry_monitor() };
 
     // drop the callback for new process interception
-    let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), TRUE as u8) };
+    let res =
+        unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), TRUE as u8) };
     if res != STATUS_SUCCESS {
         println!("[sanctum] [-] Error removing PsSetCreateProcessNotifyRoutineEx from callback routines. Error: {res}");
     }
@@ -240,26 +280,57 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
             let _ = Box::from_raw(ptr);
         }
     }
-    
+
+    //
+    // Thread cleanup
+    //
+
+    {
+        let terminate_etw_thread = Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR")
+            .expect("[sanctum] [-] Could not get TERMINATION_FLAG_ETW_MONITOR in driver exit.");
+        let mut lock = terminate_etw_thread.lock().unwrap();
+        *lock = true;
+    }
+    {
+        let thread_handle_grt: &FastMutex<*mut c_void> = Grt::get_fast_mutex("ETW_THREAD_HANDLE")
+            .expect("[sanctum] [-] Could not get ETW_THREAD_HANDLE in driver exit");
+        let thread_handle = thread_handle_grt.lock().unwrap();
+
+        if !thread_handle.is_null() {
+            let status = unsafe {
+                KeWaitForSingleObject(
+                    *thread_handle,
+                    Executive,
+                    KernelMode as _,
+                    FALSE as _,
+                    null_mut(),
+                )
+            };
+
+            if status != STATUS_SUCCESS {
+                println!("[sanctum] [-] Did not successfully call KeWaitForSingleObject when trying to exit system thread for ETW Monitoring.");
+            }
+            let _ = unsafe { ObfDereferenceObject(*thread_handle) };
+        }
+    }
+
     if let Err(e) = unsafe { Grt::destroy() } {
         println!("Error destroying: {:?}", e);
     }
 
     // delete the device
-    unsafe { IoDeleteDevice((*driver).DeviceObject);}
+    unsafe {
+        IoDeleteDevice((*driver).DeviceObject);
+    }
 
     println!("[sanctum] driver unloaded successfully...");
 }
 
-
 unsafe extern "C" fn sanctum_create_close(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NTSTATUS {
-    
     (*pirp).IoStatus.__bindgen_anon_1.Status = STATUS_SUCCESS;
     (*pirp).IoStatus.Information = 0;
     IofCompleteRequest(pirp, IO_NO_INCREMENT as i8);
 
-    println!("[sanctum] [i] IRP received...");
-    
     STATUS_SUCCESS
 }
 
@@ -290,23 +361,23 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
     // causing the driver to hang.
     let result: NTSTATUS = match control_code {
         SANC_IOCTL_PING => {
-            if let Err(e) = ioctl_handler_ping(p_stack_location, pirp){
+            if let Err(e) = ioctl_handler_ping(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
                 e
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_PING_WITH_STRUCT => {
-            if let Err(e) = ioctl_handler_ping_return_struct(p_stack_location, pirp){
+            if let Err(e) = ioctl_handler_ping_return_struct(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
                 e
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_CHECK_COMPATIBILITY => {
-            if let Err(e) = ioctl_check_driver_compatibility(p_stack_location, pirp){
+            if let Err(e) = ioctl_check_driver_compatibility(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
                 e
             } else {
@@ -314,14 +385,14 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             }
         }
         SANC_IOCTL_DRIVER_GET_MESSAGE_LEN => {
-            if let Err(_) = ioctl_handler_get_kernel_msg_len(pirp){
+            if let Err(_) = ioctl_handler_get_kernel_msg_len(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
         }
         SANC_IOCTL_DRIVER_GET_MESSAGES => {
-            if let Err(_) = ioctl_handler_send_kernel_msgs_to_userland(pirp){
+            if let Err(_) = ioctl_handler_send_kernel_msgs_to_userland(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
@@ -330,15 +401,18 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
         }
 
         _ => {
-            println!("[sanctum] [-] IOCTL control code: {} not implemented.", control_code);
+            println!(
+                "[sanctum] [-] IOCTL control code: {} not implemented.",
+                control_code
+            );
             STATUS_UNSUCCESSFUL
         }
     };
 
-    // indicates that the caller has completed all processing for a given I/O request and 
+    // indicates that the caller has completed all processing for a given I/O request and
     // is returning the given IRP to the I/O manager
     // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iocompleterequest
     IofCompleteRequest(pirp, IO_NO_INCREMENT as i8);
-    
+
     result
 }

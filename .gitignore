@@ -6,3 +6,4 @@ driver/.vscode/settings.json
 *.bkp
 *.mp4
 .DS_Store
+malphas_cloak.rs

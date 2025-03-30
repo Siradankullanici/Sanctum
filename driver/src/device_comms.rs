@@ -1,14 +1,25 @@
 use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 
+use crate::{
+    utils::{check_driver_version, DriverError, Log},
+    DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
+};
 use alloc::{format, string::String};
-use shared_no_std::{constants::SanctumVersion, driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated}, ioctl::{DriverMessages, SancIoctlPing}};
+use shared_no_std::{
+    constants::SanctumVersion,
+    driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated},
+    ioctl::{DriverMessages, SancIoctlPing},
+};
 use wdk::println;
-use wdk_sys::{ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION};
-use crate::{utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE};
 use wdk_mutex::fast_mutex::FastMutex;
+use wdk_sys::{
+    ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal},
+    APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS,
+    STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION,
+};
 
 /// DriverMessagesWithMutex object which contains a spinlock to allow for mutable access to the queue.
-/// This object should be used to safely manage access to the inner DriverMessages which contains 
+/// This object should be used to safely manage access to the inner DriverMessages which contains
 /// the actual data. The DriverMessagesWithMutex contains metadata + the DriverMessages.
 pub struct DriverMessagesWithMutex {
     data: FastMutex<DriverMessages>,
@@ -33,54 +44,46 @@ impl DriverMessagesWithMutex {
     }
 
     /// Adds a print msg to the queue.
-    /// 
+    ///
     /// This function will wait for an acquisition of the spin lock to continue and will block
     /// until that point.
-    pub fn add_message_to_queue(&mut self, data: String)
-     {
+    pub fn add_message_to_queue(&mut self, data: String) {
+        let irql = unsafe { KeGetCurrentIrql() };
+        if irql > APC_LEVEL as u8 {
+            println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
+            return;
+        }
 
-         let irql = unsafe { KeGetCurrentIrql() };
-         if irql > APC_LEVEL as u8 {
-             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
-             return;
-         }
-
-         {
+        {
             let mut lock = self.data.lock().unwrap();
             lock.is_empty = false;
             lock.messages.push(data);
-         }
+        }
     }
 
-
     /// Adds serialised data to the message queue.
-    /// 
+    ///
     /// This function will wait for an acquisition of the spin lock to continue and will block
     /// until that point.
-    pub fn add_process_creation_to_queue(&mut self, data: ProcessStarted)
-     {
-         
-         let irql = unsafe { KeGetCurrentIrql() };
-         if irql > APC_LEVEL as u8 {
-             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
-             return;
-         }
+    pub fn add_process_creation_to_queue(&mut self, data: ProcessStarted) {
+        let irql = unsafe { KeGetCurrentIrql() };
+        if irql > APC_LEVEL as u8 {
+            println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
+            return;
+        }
 
-         {
+        {
             let mut lock = self.data.lock().unwrap();
             lock.is_empty = false;
             lock.process_creations.push(data);
-         }
+        }
     }
 
-
     /// Adds a terminated process to the queue.
-    /// 
+    ///
     /// This function will wait for an acquisition of the spin lock to continue and will block
     /// until that point.
-    pub fn add_process_termination_to_queue(&mut self, data: ProcessTerminated)
-     {
-
+    pub fn add_process_termination_to_queue(&mut self, data: ProcessTerminated) {
         let irql = unsafe { KeGetCurrentIrql() };
         if irql > APC_LEVEL as u8 {
             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
@@ -92,34 +95,29 @@ impl DriverMessagesWithMutex {
             lock.is_empty = false;
             lock.process_terminations.push(data);
         }
-
     }
 
     /// Add new granted handle information to the messages object
-    pub fn add_process_handle_to_queue(&mut self, data: HandleObtained)
-     {
-         
-         let irql = unsafe { KeGetCurrentIrql() };
-         if irql > APC_LEVEL as u8 {
-             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
-             return;
-         }
+    pub fn add_process_handle_to_queue(&mut self, data: HandleObtained) {
+        let irql = unsafe { KeGetCurrentIrql() };
+        if irql > APC_LEVEL as u8 {
+            println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
+            return;
+        }
 
-         {
+        {
             let mut lock = self.data.lock().unwrap();
             lock.is_empty = false;
             lock.handles.push(data);
-         }
+        }
     }
 
-
     /// Extract all data out of the queue if there is data.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The function will return None if the queue was empty.
     fn extract_all(&mut self) -> Option<DriverMessages> {
-
         let irql = unsafe { KeGetCurrentIrql() };
         if irql > APC_LEVEL as u8 {
             println!("[sanctum] [-] IRQL is above APC_LEVEL: {}", irql);
@@ -145,20 +143,19 @@ impl DriverMessagesWithMutex {
         }
     }
 
-
     fn add_existing_queue(&mut self, q: &mut DriverMessages) -> usize {
-
         let mut lock = self.data.lock().unwrap();
 
         lock.is_empty = false;
         lock.messages.append(&mut q.messages);
         lock.process_creations.append(&mut q.process_creations);
-        lock.process_terminations.append(&mut q.process_terminations);
+        lock.process_terminations
+            .append(&mut q.process_terminations);
         lock.handles.append(&mut q.handles);
 
         // IMPORTANT NOTE: As well as adding a new field to the below (compile time checked) you ALSO must
         // add the field to the above append instructions.
-        let tmp = serde_json::to_vec(&DriverMessages{
+        let tmp = serde_json::to_vec(&DriverMessages {
             messages: lock.messages.clone(),
             process_creations: lock.process_creations.clone(),
             process_terminations: lock.process_terminations.clone(),
@@ -171,7 +168,7 @@ impl DriverMessagesWithMutex {
             Err(e) => {
                 println!("[sanctum] [-] Error serializing temp object for len. {e}.");
                 return 0;
-            },
+            }
         };
 
         len
@@ -185,113 +182,110 @@ struct IoctlBuffer {
     pirp: PIRP,
 }
 
-
 impl IoctlBuffer {
-
     /// Creates a new instance of the IOCTL buffer type
-    fn new(
-        p_stack_location: *mut _IO_STACK_LOCATION,
-        pirp: PIRP
-    ) -> Self {
+    fn new(p_stack_location: *mut _IO_STACK_LOCATION, pirp: PIRP) -> Self {
         IoctlBuffer {
             len: 0,
             buf: null_mut(),
             p_stack_location,
-            pirp
+            pirp,
         }
     }
 
     /// Converts the input buffer from the IO Manager into a valid utf8 string.
-    fn get_buf_to_str(
-        &mut self,
-    ) -> Result<&str, NTSTATUS> {
-
+    fn get_buf_to_str(&mut self) -> Result<&str, NTSTATUS> {
         // first initialise the fields with buf and len
         self.receive()?;
 
         // construct the message from the pointer (ascii &[u8])
-        let input_buffer = unsafe {core::slice::from_raw_parts(self.buf as *const u8, self.len as usize)};
-        if input_buffer.is_empty() { 
+        let input_buffer =
+            unsafe { core::slice::from_raw_parts(self.buf as *const u8, self.len as usize) };
+        if input_buffer.is_empty() {
             println!("[sanctum] [-] Error reading string passed to PING IOCTL");
             return Err(STATUS_UNSUCCESSFUL);
         }
 
         let input_buffer = core::str::from_utf8(input_buffer).unwrap();
 
-        // this does not result in a dangling reference as we are referring to memory owned by Self, we are returning 
+        // this does not result in a dangling reference as we are referring to memory owned by Self, we are returning
         // a slice of that memory.
         Ok(input_buffer)
     }
 
-    /// Receives raw data from the IO Manager and checks the validity of the data. If the data was valid, it will set the member 
-    /// fields for the length, buffer, and raw pointers to the required structs. 
-    /// 
+    /// Receives raw data from the IO Manager and checks the validity of the data. If the data was valid, it will set the member
+    /// fields for the length, buffer, and raw pointers to the required structs.
+    ///
     /// If you want to get a string out of an ioctl buffer, it would be better to call get_buf_to_str.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success: a IoctlBuffer which will hold the length and a pointer to the buffer
-    /// 
+    ///
     /// Error: NTSTATUS
-    fn receive(
-        &mut self,
-    ) -> Result<(), NTSTATUS> {
-    
+    fn receive(&mut self) -> Result<(), NTSTATUS> {
         // length of in buffer
-        let input_len: u32 = unsafe {(*self.p_stack_location).Parameters.DeviceIoControl.InputBufferLength};
-        // if input_len == 0 { 
-        //     println!("[sanctum] [-] IOCTL PING input length invalid.");
-        //     return Err(STATUS_BUFFER_TOO_SMALL) 
-        // };
-    
-        // For METHOD_BUFFERED, the driver should use the buffer pointed to by Irp->AssociatedIrp.SystemBuffer as the output buffer.
-        let input_buffer: *mut c_void = unsafe {(*self.pirp).AssociatedIrp.SystemBuffer};
-        if input_buffer.is_null() { 
-            println!("[sanctum] [-] Input buffer is null.");
-            return Err(STATUS_BUFFER_ALL_ZEROS) 
+        let input_len: u32 = unsafe {
+            (*self.p_stack_location)
+                .Parameters
+                .DeviceIoControl
+                .InputBufferLength
         };
-    
+        // if input_len == 0 {
+        //     println!("[sanctum] [-] IOCTL PING input length invalid.");
+        //     return Err(STATUS_BUFFER_TOO_SMALL)
+        // };
+
+        // For METHOD_BUFFERED, the driver should use the buffer pointed to by Irp->AssociatedIrp.SystemBuffer as the output buffer.
+        let input_buffer: *mut c_void = unsafe { (*self.pirp).AssociatedIrp.SystemBuffer };
+        if input_buffer.is_null() {
+            println!("[sanctum] [-] Input buffer is null.");
+            return Err(STATUS_BUFFER_ALL_ZEROS);
+        };
+
         // validate the pointer
         if input_buffer.is_null() {
             println!("[sanctum] [-] IOCTL input buffer was null.");
             return Err(STATUS_UNSUCCESSFUL);
         }
-    
+
         self.len = input_len;
         self.buf = input_buffer;
-    
+
         Ok(())
     }
 
-
-    /// Sends a str slice &[u8] back to the userland application taking in a &str and making 
+    /// Sends a str slice &[u8] back to the userland application taking in a &str and making
     /// the necessary conversions.
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// Success: ()
-    /// 
+    ///
     /// Error: NTSTATUS
-    fn send_str(
-        &self,
-        input_str: &str,
-    ) -> Result<(), NTSTATUS> {
-
+    fn send_str(&self, input_str: &str) -> Result<(), NTSTATUS> {
         // handled the request successfully
-        unsafe {(*self.pirp).IoStatus.__bindgen_anon_1.Status = STATUS_SUCCESS};
+        unsafe { (*self.pirp).IoStatus.__bindgen_anon_1.Status = STATUS_SUCCESS };
 
         // response back to userland
         let response = input_str.as_bytes();
         let response_len = response.len();
-        unsafe {(*self.pirp).IoStatus.Information = response_len as u64};
+        unsafe { (*self.pirp).IoStatus.Information = response_len as u64 };
 
-        println!("[sanctum] [i] Sending back to userland {:?}", core::str::from_utf8(response).unwrap());
+        println!(
+            "[sanctum] [i] Sending back to userland {:?}",
+            core::str::from_utf8(response).unwrap()
+        );
 
         // Copy the data now into the buffer to send back to usermode.
         // The driver should not write directly to the buffer pointed to by Irp->UserBuffer.
         unsafe {
             if !(*self.pirp).AssociatedIrp.SystemBuffer.is_null() {
-                RtlCopyMemoryNonTemporal((*self.pirp).AssociatedIrp.SystemBuffer as *mut c_void, response as *const _ as *mut c_void, response_len as u64);
+                RtlCopyMemoryNonTemporal(
+                    (*self.pirp).AssociatedIrp.SystemBuffer as *mut c_void,
+                    response as *const _ as *mut c_void,
+                    response_len as u64,
+                );
             } else {
                 println!("[sanctum] [-] Error handling IOCTL PING, SystemBuffer was null.");
                 return Err(STATUS_UNSUCCESSFUL);
@@ -307,7 +301,6 @@ pub fn ioctl_handler_ping(
     p_stack_location: *mut _IO_STACK_LOCATION,
     pirp: PIRP,
 ) -> Result<(), NTSTATUS> {
-
     let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
     // ioctl_buffer.receive()?;
 
@@ -323,11 +316,8 @@ pub fn ioctl_handler_ping(
 /// Get the response size of the message we need to send back to the usermode application.
 /// This function will also shift the kernel message queue into a temp (global) object which will
 /// retain the size, resetting the live queue.
-pub fn ioctl_handler_get_kernel_msg_len(
-    pirp: PIRP,
-) -> Result<(), DriverError> {
-
-    unsafe { 
+pub fn ioctl_handler_get_kernel_msg_len(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
         if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
             println!("[sanctum] [-] SystemBuffer is a null pointer.");
             return Err(DriverError::NullPtr);
@@ -336,22 +326,24 @@ pub fn ioctl_handler_get_kernel_msg_len(
 
     let len_of_response = if !DRIVER_MESSAGES.load(Ordering::SeqCst).is_null() {
         let driver_messages = unsafe { &mut *DRIVER_MESSAGES.load(Ordering::SeqCst) };
-        
+
         let local_drained_driver_messages = driver_messages.extract_all();
         if local_drained_driver_messages.is_none() {
             return Err(DriverError::NoDataToSend);
         }
-        
+
         //
         // At this point, the transferred data form the queue has data in. Now try obtain a valid reference to
         // the driver message cache global
         //
 
         if !DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst).is_null() {
-            let driver_message_cache = unsafe { &mut *DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst) };
-            
+            let driver_message_cache =
+                unsafe { &mut *DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst) };
+
             // add the drained data from the live driver messages to the cache, and return the size of the data
-            let size_of_serialised_cache: usize = driver_message_cache.add_existing_queue(&mut local_drained_driver_messages.unwrap());
+            let size_of_serialised_cache: usize = driver_message_cache
+                .add_existing_queue(&mut local_drained_driver_messages.unwrap());
 
             size_of_serialised_cache
         } else {
@@ -363,19 +355,18 @@ pub fn ioctl_handler_get_kernel_msg_len(
         return Err(DriverError::DriverMessagePtrNull);
     };
 
-
     if len_of_response == 0 {
         return Err(DriverError::NoDataToSend);
     }
 
-    unsafe {(*pirp).IoStatus.Information = mem::size_of::<usize>() as u64};
+    unsafe { (*pirp).IoStatus.Information = mem::size_of::<usize>() as u64 };
 
     // copy the memory into the buffer
     unsafe {
         RtlCopyMemoryNonTemporal(
-            (*pirp).AssociatedIrp.SystemBuffer, 
-            &len_of_response as *const _ as *const _, 
-            mem::size_of::<usize>() as u64
+            (*pirp).AssociatedIrp.SystemBuffer,
+            &len_of_response as *const _ as *const _,
+            mem::size_of::<usize>() as u64,
         )
     };
 
@@ -383,11 +374,8 @@ pub fn ioctl_handler_get_kernel_msg_len(
 }
 
 /// Send any kernel messages in the DriverMessages struct back to userland.
-pub fn ioctl_handler_send_kernel_msgs_to_userland(
-    pirp: PIRP,
-) -> Result<(), DriverError> {
-
-    unsafe { 
+pub fn ioctl_handler_send_kernel_msgs_to_userland(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
         if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
             println!("[sanctum] [-] SystemBuffer is a null pointer.");
             return Err(DriverError::NullPtr);
@@ -413,30 +401,28 @@ pub fn ioctl_handler_send_kernel_msgs_to_userland(
         Err(_) => {
             println!("[sanctum] [-] Error serializing data to string in ioctl_handler_send_kernel_msgs_to_userland");
             return Err(DriverError::CouldNotSerialize);
-        },
+        }
     };
 
     let size_of_struct = encoded_data.len() as u64;
-    unsafe {(*pirp).IoStatus.Information = size_of_struct};
+    unsafe { (*pirp).IoStatus.Information = size_of_struct };
 
     // copy the memory into the buffer
     unsafe {
         RtlCopyMemoryNonTemporal(
-            (*pirp).AssociatedIrp.SystemBuffer, 
-            encoded_data.as_ptr() as *const _, 
-            size_of_struct
+            (*pirp).AssociatedIrp.SystemBuffer,
+            encoded_data.as_ptr() as *const _,
+            size_of_struct,
         )
     };
 
     Ok(())
 }
 
-
 pub fn ioctl_handler_ping_return_struct(
     p_stack_location: *mut _IO_STACK_LOCATION,
     pirp: PIRP,
 ) -> Result<(), NTSTATUS> {
-
     let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
     ioctl_buffer.receive()?; // receive the data
 
@@ -449,20 +435,25 @@ pub fn ioctl_handler_ping_return_struct(
     let input_data = unsafe { &(*input_data) };
 
     // construct the input str from the array
-    let input_str = unsafe { core::slice::from_raw_parts(input_data.version.as_ptr() as *const u8, input_data.str_len) };
+    let input_str = unsafe {
+        core::slice::from_raw_parts(input_data.version.as_ptr() as *const u8, input_data.str_len)
+    };
     let input_str = match core::str::from_utf8(input_str) {
         Ok(v) => v,
         Err(e) => {
             println!("[sanctum] [-] Error converting input slice to string. {e}");
             return Err(STATUS_UNSUCCESSFUL);
-        },
+        }
     };
 
-    println!("[sanctum] [+] Input bool: {}, input str: {:#?}", input_data.received, input_str);
+    println!(
+        "[sanctum] [+] Input bool: {}, input str: {:#?}",
+        input_data.received, input_str
+    );
 
-    // setup output 
+    // setup output
     let msg = b"Msg received from the Kernel!";
-    let mut out_buf = SancIoctlPing::new(); 
+    let mut out_buf = SancIoctlPing::new();
 
     if msg.len() > out_buf.capacity {
         println!("[sanctum] [-] Message too large to send back to usermode.");
@@ -473,30 +464,32 @@ pub fn ioctl_handler_ping_return_struct(
     out_buf.version[..msg.len()].copy_from_slice(msg);
     out_buf.str_len = msg.len();
 
-    unsafe { 
+    unsafe {
         if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
             println!("[sanctum] [-] SystemBuffer is a null pointer.");
             return Err(STATUS_UNSUCCESSFUL);
         }
     }
     let size_of_struct = core::mem::size_of_val(&out_buf) as u64;
-    unsafe {(*pirp).IoStatus.Information = size_of_struct};
+    unsafe { (*pirp).IoStatus.Information = size_of_struct };
 
     unsafe {
-        RtlCopyMemoryNonTemporal((*pirp).AssociatedIrp.SystemBuffer, &out_buf as *const _ as *const c_void, size_of_struct)
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            &out_buf as *const _ as *const c_void,
+            size_of_struct,
+        )
     };
 
     Ok(())
 }
 
-
-/// Checks the compatibility of the driver version with client version. For all intents and purposes this can be 
+/// Checks the compatibility of the driver version with client version. For all intents and purposes this can be
 /// considered the real 'ping' with the current pings being POC for passing data between UM and KM.
 pub fn ioctl_check_driver_compatibility(
     p_stack_location: *mut _IO_STACK_LOCATION,
     pirp: PIRP,
 ) -> Result<(), NTSTATUS> {
-
     let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
     ioctl_buffer.receive()?; // receive the data
 
@@ -507,20 +500,30 @@ pub fn ioctl_check_driver_compatibility(
     }
 
     // validated the pointer, data should be safe to dereference
-    let input_data: &SanctumVersion = unsafe {&*input_data};
+    let input_data: &SanctumVersion = unsafe { &*input_data };
 
     // check whether we are compatible
     let response = check_driver_version(input_data);
-    println!("[sanctum] [i] Client version: {}.{}.{}, is compatible with driver version: {}.", input_data.major, input_data.minor, input_data.patch, response);
+    println!(
+        "[sanctum] [i] Client version: {}.{}.{}, is compatible with driver version: {}.",
+        input_data.major, input_data.minor, input_data.patch, response
+    );
     let log = Log::new();
-    log.log_to_userland(format!("[i] Client version: {}.{}.{}, is compatible with driver version: {}.", input_data.major, input_data.minor, input_data.patch, response));
+    log.log_to_userland(format!(
+        "[i] Client version: {}.{}.{}, is compatible with driver version: {}.",
+        input_data.major, input_data.minor, input_data.patch, response
+    ));
 
     // prepare the data
     let res_size = core::mem::size_of_val(&response) as u64;
     unsafe { (*pirp).IoStatus.Information = res_size };
 
     unsafe {
-        RtlCopyMemoryNonTemporal((*pirp).AssociatedIrp.SystemBuffer, &response as *const bool as *const c_void, res_size);
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            &response as *const bool as *const c_void,
+            res_size,
+        );
     }
 
     Ok(())

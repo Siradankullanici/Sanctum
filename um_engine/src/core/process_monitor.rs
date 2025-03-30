@@ -78,9 +78,9 @@ impl ProcessMonitor {
          */
 
         // Inject the EDR's DLL. 
-        // TODO for now to prevent system instability this will only be done for Notepad. This will need to be 
+        // TODO for now to prevent system instability this will only be done for pre defined processes. This will need to be 
         // reflected at some point for all processes.
-        if proc.image_name.contains(TARGET_EXE) {
+        if proc.image_name.contains(TARGET_EXE) || proc.image_name.contains("powershell") {
             println!("[i] Target process detected, injecting EDR DLL...");
             if let Err(e) = inject_edr_dll(proc.pid) {
                 logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
