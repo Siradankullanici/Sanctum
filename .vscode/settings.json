@@ -4,6 +4,7 @@
 
     "cSpell.words": [
         "Addreg",
+        "AMSI",
         "APIC",
         "appdata",
         "ASSOCSERVICE",
@@ -39,6 +40,8 @@
         "LPPROC",
         "lpthread",
         "lsass",
+        "malphas",
+        "minifilters",
         "MODULEINFO",
         "movabs",
         "nanos",
@@ -93,6 +96,7 @@
         "umipc",
         "uncategorized",
         "Uninit",
+        "Unregisters",
         "usermode",
         "vaddr",
         "wevtutil",

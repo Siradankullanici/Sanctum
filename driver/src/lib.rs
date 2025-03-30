@@ -19,9 +19,7 @@ use ::core::{
 };
 use alloc::{boxed::Box, format, vec::Vec};
 use core::{
-    etw_mon::monitor_kernel_etw,
-    processes::{process_create_callback, ProcessHandleCallback},
-    threads::{set_thread_creation_callback, thread_callback},
+    etw_mon::monitor_kernel_etw, processes::{process_create_callback, ProcessHandleCallback}, registry::{enable_registry_monitoring, unregister_registry_monitor}, threads::{set_thread_creation_callback, thread_callback}
 };
 use device_comms::{
     ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping,
@@ -44,7 +42,6 @@ use wdk_sys::{
         IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink,
         IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject,
         PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString,
-        ZwClose,
     },
     DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN,
     FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL,
@@ -101,7 +98,7 @@ pub unsafe extern "system" fn driver_entry(
     let status = configure_driver(driver, registry_path as *mut _);
 
     monitor_kernel_etw();
-
+    
     status
 }
 
@@ -198,6 +195,11 @@ pub unsafe extern "C" fn configure_driver(
     // Core callback functions for the EDR
     //
 
+    // Registry callbacks
+    if let Err(code) = enable_registry_monitoring(driver as _) {
+        return code;
+    }
+
     // Thread interception
     set_thread_creation_callback();
 
@@ -238,6 +240,9 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     //
     // Unregister callback routines
     //
+
+    // registry
+    unsafe { unregister_registry_monitor() };
 
     // drop the callback for new process interception
     let res =
