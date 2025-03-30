@@ -1,11 +1,19 @@
 //! Stubs that act as callback functions from syscalls.
 
-use std::{arch::asm, ffi::c_void};
-use shared_std::processes::{DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
-use windows::Win32::{Foundation::HANDLE, System::{Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID}};
-use crate::ipc::send_ipc_to_engine;
+use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
+use shared_std::processes::{
+    DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
+    Syscall, SyscallEventSource,
+};
+use std::{arch::asm, ffi::c_void, thread::sleep, time::Duration};
+use windows::Win32::{
+    Foundation::HANDLE,
+    System::{
+        Memory::{PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY}, Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID
+    },
+};
 
-/// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from 
+/// Injected DLL routine for examining the arguments passed to ZwOpenProcess and NtOpenProcess from
 /// any process this DLL is injected into.
 #[unsafe(no_mangle)]
 unsafe extern "system" fn open_process(
@@ -15,26 +23,20 @@ unsafe extern "system" fn open_process(
     client_id: *mut CLIENT_ID,
 ) {
     if !client_id.is_null() {
-        let target_pid = unsafe {(*client_id).UniqueProcess.0 } as u32;
+        let target_pid = unsafe { (*client_id).UniqueProcess.0 } as u32;
         let pid = unsafe { GetCurrentProcessId() };
 
-        let data = DLLMessage::SyscallWrapper(
-            Syscall {
-                nt_function: NtFunction::NtOpenProcess(
-                    Some(NtOpenProcessData {
-                        target_pid,
-                    }),
-                ),
-                pid,
-                source: SyscallEventSource::EventSourceSyscallHook,
-                evasion_weight: 30,
-            }
-        );
+        let data = DLLMessage::SyscallWrapper(Syscall {
+            nt_function: NtFunction::NtOpenProcess(Some(NtOpenProcessData { target_pid })),
+            pid,
+            source: SyscallEventSource::EventSourceSyscallHook,
+            evasion_weight: 30,
+        });
 
         // send the telemetry to the engine
         send_ipc_to_engine(data);
     }
-    
+
     // todo automate the syscall number so not hardcoded
     let ssn = 0x26; // give the compiler awareness of rax
 
@@ -65,9 +67,8 @@ unsafe extern "system" fn virtual_alloc_ex(
     allocation_type: u32,
     protect: u32,
 ) {
-
     //
-    // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in 
+    // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in
     // self allocations - we can deal with that later. We just want remote process memory allocations for the time being.
     // todo - future do self alloc
     //
@@ -84,26 +85,22 @@ unsafe extern "system" fn virtual_alloc_ex(
             unsafe { *region_size }
         };
 
-        let data = DLLMessage::SyscallWrapper(
-            Syscall {
-                nt_function: NtFunction::NtAllocateVirtualMemory(
-                    Some(NtAllocateVirtualMemory {
-                        base_address: base_address as usize,
-                        region_size: region_size_checked,
-                        allocation_type,
-                        protect,
-                        remote_pid,
-                    }),
-                ),
-                pid,
-                source: SyscallEventSource::EventSourceSyscallHook,
-                evasion_weight: 60,
-            }
-        );
-    
+        let data = DLLMessage::SyscallWrapper(Syscall {
+            nt_function: NtFunction::NtAllocateVirtualMemory(Some(NtAllocateVirtualMemory {
+                base_address: base_address as usize,
+                region_size: region_size_checked,
+                allocation_type,
+                protect,
+                remote_pid,
+            })),
+            pid,
+            source: SyscallEventSource::EventSourceSyscallHook,
+            evasion_weight: 60,
+        });
+
         send_ipc_to_engine(data);
     }
-    
+
     // proceed with the syscall
     let ssn = 0x18;
     unsafe {
@@ -146,15 +143,11 @@ unsafe extern "system" fn nt_write_virtual_memory(
     // todo inspect buffer  for magic bytes + dos header, etc
 
     let data = Syscall {
-        nt_function: NtFunction::NtWriteVirtualMemory(
-            Some(
-                NtWriteVirtualMemoryData {
-                    target_pid: remote_pid,
-                    base_address: base_addr_as_usize,
-                    buf_len: buf_len_as_usize,
-                }
-            )
-        ),
+        nt_function: NtFunction::NtWriteVirtualMemory(Some(NtWriteVirtualMemoryData {
+            target_pid: remote_pid,
+            base_address: base_addr_as_usize,
+            buf_len: buf_len_as_usize,
+        })),
         pid,
         source: SyscallEventSource::EventSourceSyscallHook,
         evasion_weight: 60,
@@ -181,17 +174,48 @@ unsafe extern "system" fn nt_write_virtual_memory(
             options(nostack),
         );
     }
-
 }
 
 pub fn nt_protect_virtual_memory(
     handle: HANDLE,
     base_address: *const usize,
-    bytes_to_protect: *const u32,
+    no_bytes_to_protect: *const u32,
     new_access_protect: u32,
     old_protect: *const usize,
 ) {
-    // todo process args and send to engine
+    // Is the process trying to change the protection of NTDLL? If so, that is bad
+    // and we do not want to allow that to happen in any circumstance.
+    let (base_of_ntdll, size_of_text_sec) = get_base_and_sz_ntdll();
+
+    if base_address.is_null() {
+        println!("[sanctum] [-] Base address was null, invalid operation.");
+        return;
+    }
+
+    let target_base = unsafe { *base_address };
+    let target_end = target_base + unsafe { *no_bytes_to_protect } as usize;
+
+    let monitor_from = base_of_ntdll + 372; // account for some weird thing
+    let end_of_ntdll: usize = monitor_from + size_of_text_sec;
+    if target_end >= monitor_from && target_end <= end_of_ntdll {
+        if new_access_protect & PAGE_EXECUTE_READWRITE.0 == PAGE_EXECUTE_READWRITE.0 || 
+            new_access_protect & PAGE_WRITECOPY.0 == PAGE_WRITECOPY.0 || 
+            new_access_protect & PAGE_WRITECOMBINE.0 == PAGE_WRITECOMBINE.0 || 
+            new_access_protect & PAGE_READWRITE.0 == PAGE_READWRITE.0 || 
+            new_access_protect & PAGE_EXECUTE_WRITECOPY.0 == PAGE_EXECUTE_WRITECOPY.0 {
+                // At this point, we have a few options:
+                // 1 - Suspend threads until the EDR tells us what to do
+                // 2 - Return an error consistent with what we would get from the syscall, maybe access denied, indicating that
+                //      the syscall failed (by returning we do not make the syscall)
+                // 3 - Exit the process
+                // In all cases - the EDR engine should be notified of the event. For demo purposes, this will not be immediately 
+                // implemented.
+                // In this case - we will simply terminate the process.
+                // todo - handle more gracefully in the future.
+                println!("[sanctum] [!] NTDLL tampering detected, attempting to alter memory protections on NTDLL. Base address: {:p}, new protect: {:b}. No bytes: {}", target_base as *const c_void, new_access_protect, unsafe { *no_bytes_to_protect});
+                std::process::exit(12345678);
+            }
+    }
 
     // proceed with the syscall
     let ssn = 0x50;
@@ -207,7 +231,7 @@ pub fn nt_protect_virtual_memory(
             in("rax") ssn,
             in("rcx") handle.0,
             in("rdx") base_address,
-            in("r8") bytes_to_protect,
+            in("r8") no_bytes_to_protect,
             in("r9") new_access_protect,
             options(nostack),
         );

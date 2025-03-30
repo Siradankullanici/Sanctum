@@ -2,7 +2,13 @@
 
 use core::{ffi::c_void, ptr::null_mut};
 
-use wdk_sys::{ntddk::{KeGetCurrentIrql, KeInitializeEvent}, DISPATCH_LEVEL, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, NTSTATUS, OBJECT_ATTRIBUTES, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES, PROCESSINFOCLASS, PSECURITY_DESCRIPTOR, PUNICODE_STRING, ULONG, _EVENT_TYPE::SynchronizationEvent};
+use wdk_sys::{
+    ntddk::{KeGetCurrentIrql, KeInitializeEvent},
+    DISPATCH_LEVEL, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, NTSTATUS,
+    OBJECT_ATTRIBUTES, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES, PROCESSINFOCLASS,
+    PSECURITY_DESCRIPTOR, PUNICODE_STRING, ULONG,
+    _EVENT_TYPE::SynchronizationEvent,
+};
 
 // #[link(name = "ntoskrnl")]
 // extern "system" {
@@ -38,9 +44,9 @@ pub unsafe fn ExInitializeFastMutex(kmutex: *mut FAST_MUTEX) {
     KeInitializeEvent(&mut (*kmutex).Event, SynchronizationEvent, FALSE as _)
 }
 
-/// The InitializeObjectAttributes macro initializes the opaque OBJECT_ATTRIBUTES structure, 
+/// The InitializeObjectAttributes macro initializes the opaque OBJECT_ATTRIBUTES structure,
 /// which specifies the properties of an object handle to routines that open handles.
-/// 
+///
 /// # Returns
 /// This function will return an Err if the POBJECT_ATTRIBUTES is null. Otherwise, it will return
 /// Ok(())
@@ -51,7 +57,7 @@ pub unsafe fn InitializeObjectAttributes(
     a: ULONG,
     r: HANDLE,
     s: PSECURITY_DESCRIPTOR,
-) -> Result<(), ()>{
+) -> Result<(), ()> {
     // check the validity of the OBJECT_ATTRIBUTES pointer
     if p.is_null() {
         return Err(());
