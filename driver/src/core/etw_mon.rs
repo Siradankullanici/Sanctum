@@ -21,20 +21,35 @@ use wdk_sys::{
 /// Entrypoint for monitoring kernel ETW structures to detect rootkits or other ETW manipulation
 pub fn monitor_kernel_etw() {
     // Call the functions
-    let guid_map = traverse_guid_tables_for_etw_monitoring_data()
-        .expect("[sanctum] [-] Failed to start the monitoring of guid enabled mask");
-    monitor_etw_dispatch_table()
-        .expect("[sanctum] [-] Failed to start the monitoring of ETW Table");
-    monitor_system_logger_bitmask()
-        .expect("[sanctum] [-] Failed to start the monitoring of system logging ETW bitmask");
+    let guid_map = match traverse_guid_tables_for_etw_monitoring_data() {
+        Ok(g) => g,
+        Err(_) => {
+            println!("[sanctum] [-] Failed to start the monitoring of guid enabled mask, kernel ETW is not being monitored.");
+            return;
+        },
+    };
+
+    if monitor_etw_dispatch_table().is_err() {
+        println!("[sanctum] [-] Failed to start the monitoring of ETW Table, kernel ETW is not being monitored.");
+        return;
+    }
+
+    if monitor_system_logger_bitmask().is_err() {
+        println!("[sanctum] [-] Failed to start the monitoring of system logging ETW bitmask, kernel ETW is not being monitored.");
+        return;
+    }
 
     // Add any returned maps to the Grt for mutex use - it's possible some functions don't expose their maps
     // and implement them internally, that is fine.
-    Grt::register_fast_mutex("etw_guid_table", guid_map.0)
-        .expect("[sanctum] [-] Could not register wdk-mutex for etw_guid_table");
+    if Grt::register_fast_mutex("etw_guid_table", guid_map.0).is_err() {
+        println!("[sanctum] [-] Could not register wdk-mutex for etw_guid_table, kernel ETW is not being monitored.");
+        return;
+    }
 
-    Grt::register_fast_mutex("etw_guid_reg_entry_mask", guid_map.1)
-        .expect("[sanctum] [-] Could not register wdk-mutex for etw_guid_reg_entry_mask");
+    if Grt::register_fast_mutex("etw_guid_reg_entry_mask", guid_map.1).is_err() {
+        println!("[sanctum] [-] Could not register wdk-mutex for etw_guid_reg_entry_mask, kernel ETW is not being monitored.");
+        return;
+    }
 
     // Start the thread that will monitor for changes
     let mut thread_handle: HANDLE = null_mut();
@@ -52,8 +67,8 @@ pub fn monitor_kernel_etw() {
     };
 
     if thread_status != STATUS_SUCCESS {
-        println!("[sanctum] [-] Could not create new thread for monitoring ETW patching");
-        panic!("[sanctum] [-] Could not create new thread for monitoring ETW patching");
+        println!("[sanctum] [-] Could not create new thread for monitoring ETW patching, kernel ETW is not being monitored.");
+        return;
     }
 
     // To prevent a BSOD when exiting the thread on driver unload, we need to reference count the handle
@@ -70,14 +85,18 @@ pub fn monitor_kernel_etw() {
         )
     } != STATUS_SUCCESS
     {
-        println!("[sanctum] [-] Could not get thread handle by ObRef..");
-        panic!("[sanctum] [-] Could not get thread handle by ObRef..");
+        println!("[sanctum] [-] Could not get thread handle by ObRef.. kernel ETW is not being monitored.");
+        return;
     }
 
-    Grt::register_fast_mutex("TERMINATION_FLAG_ETW_MONITOR", false)
-        .expect("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX");
-    Grt::register_fast_mutex("ETW_THREAD_HANDLE", object)
-        .expect("[sanctum] [-] Could not register ETW_THREAD_HANDLE as a FAST_MUTEX");
+    if Grt::register_fast_mutex("TERMINATION_FLAG_ETW_MONITOR", false).is_err() {
+        println!("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING.");
+        panic!("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING.");
+    }
+    if Grt::register_fast_mutex("ETW_THREAD_HANDLE", object).is_err() {
+        println!("[sanctum] [-] Could not register ETW_THREAD_HANDLE as a FAST_MUTEX, PANICKING");
+        panic!("[sanctum] [-] Could not register ETW_THREAD_HANDLE as a FAST_MUTEX, PANICKING")
+    }
 }
 
 fn monitor_etw_dispatch_table() -> Result<(), ()> {
