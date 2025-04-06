@@ -4,7 +4,9 @@
 
 This project is a Windows Driver written in Rust.
 
-You can find some demos on my [YouTube channel](https://www.youtube.com/@FluxSec) of the EDR.
+You can find some demos on my [YouTube channel](https://www.youtube.com/@FluxSec) of the EDR. Including, blocking of a live Remcos sample based on behaviour (not static indicators):
+
+[![YouTube Video](https://img.youtube.com/vi/KEbLtDrur_4/0.jpg)](https://www.youtube.com/watch?v=KEbLtDrur_4)
 
 Sanctum EDR is an Endpoint Detection and Response proof-of-concept product I am building, that I will use to try combat modern malware techniques that I develop.
 
