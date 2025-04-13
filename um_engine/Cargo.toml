@@ -1,10 +1,10 @@
 [package]
 name = "um_engine"
 version = "0.0.3"
-edition = "2021"
+edition = "2024"
 
 [dependencies]
-windows = {version = "0.59.0", features = [
+windows = {version = "0", features = [
     "Win32_Foundation",
     "Win32_System_Services",
     "Win32_System_SystemServices",
@@ -23,8 +23,8 @@ windows = {version = "0.59.0", features = [
 ]}
 shared_no_std = { path = "../shared_no_std" }
 shared_std = { path = "../shared_std" }
-serde = { version = "1.0.215", features = ["derive"] }
-serde_json = "1.0.133"
-tokio = {version="1.41.1", features = ["full"] }
-md-5 = "0.10.6"
-reqwest = {version = "0.12.9", features = []}
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+tokio = {version="1", features = ["full"] }
+md-5 = "0.10"
+reqwest = {version = "0.12", features = []}
