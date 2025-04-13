@@ -5,19 +5,19 @@ use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
 use wdk_sys::{
+    _MODE::KernelMode,
+    _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS,
+    APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION,
+    OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION,
+    OB_PRE_OPERATION_INFORMATION, OB_PREOP_CALLBACK_STATUS, PEPROCESS, PROCESS_ALL_ACCESS,
+    PS_CREATE_NOTIFY_INFO, PsProcessType, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING,
     ntddk::{
         KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId,
         PsGetProcessId, RtlInitUnicodeString,
     },
-    PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION,
-    OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE,
-    OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS,
-    PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING,
-    _MODE::KernelMode,
-    _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS,
 };
 
-use crate::{utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE};
+use crate::{DRIVER_MESSAGES, REGISTRATION_HANDLE, utils::unicode_to_string};
 
 /// Callback function for a new process being created on the system.
 pub unsafe extern "C" fn process_create_callback(
@@ -150,7 +150,9 @@ impl ProcessHandleCallback {
 
         let status = unsafe { ObRegisterCallbacks(&mut callback_registration, &mut reg_handle) };
         if status != STATUS_SUCCESS {
-            println!("[sanctum] [-] Unable to register callback for handle interception. Failed with code: {status}.");
+            println!(
+                "[sanctum] [-] Unable to register callback for handle interception. Failed with code: {status}."
+            );
             return Err(STATUS_UNSUCCESSFUL);
         }
         REGISTRATION_HANDLE.store(reg_handle as *mut _, Ordering::Relaxed);
@@ -213,7 +215,7 @@ pub union ProcessLoggingInformation {
     pub flags: u32,
 }
 
-extern "system" {
+unsafe extern "system" {
     fn ZwSetInformationProcess(
         ProcessHandle: HANDLE,
         ProcessInformationClass: u32,

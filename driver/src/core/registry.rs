@@ -6,17 +6,17 @@ use alloc::{string::String, vec::Vec};
 use wdk::{nt_success, println};
 use wdk_mutex::{fast_mutex::FastMutex, grt::Grt};
 use wdk_sys::{
+    _REG_NOTIFY_CLASS::RegNtPreDeleteKey,
+    DRIVER_OBJECT, LARGE_INTEGER, NTSTATUS, REG_DELETE_KEY_INFORMATION, REG_NOTIFY_CLASS,
+    STATUS_ACCESS_DENIED, STATUS_SUCCESS, UNICODE_STRING,
     ntddk::{
         CmCallbackGetKeyObjectIDEx, CmCallbackReleaseKeyObjectIDEx, CmRegisterCallbackEx,
         CmUnRegisterCallback, RtlInitUnicodeString,
     },
-    LARGE_INTEGER, NTSTATUS, REG_DELETE_KEY_INFORMATION, REG_NOTIFY_CLASS, STATUS_ACCESS_DENIED,
-    STATUS_SUCCESS, UNICODE_STRING,
-    _REG_NOTIFY_CLASS::RegNtPreDeleteKey,
 };
 
 /// Enables the EDR driver component to monitor the registry for changes.
-pub fn enable_registry_monitoring(driver_object: *mut c_void) -> Result<(), i32> {
+pub fn enable_registry_monitoring(driver_object: &mut DRIVER_OBJECT) -> Result<(), i32> {
     // We probably want the altitude string to be high, we would like this at the very very top of the
     // IO stack to prevent a rootkit 'hiding' the entry from the remaining minifilters. We may also
     // be well placed as we are ELAM?
@@ -32,7 +32,7 @@ pub fn enable_registry_monitoring(driver_object: *mut c_void) -> Result<(), i32>
         CmRegisterCallbackEx(
             Some(handle_registry_event),
             &altitude_unicode,
-            driver_object,
+            driver_object as *mut _ as *mut _,
             null_mut(),
             &mut registration_cookie,
             null_mut(),
