@@ -1,45 +1,67 @@
 //! Consume IPC messages from the Events Tracing for Windows consumer.
 
-use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
+use crate::{
+    engine::PPL_SERVICE_PID,
+    utils::log::{Log, LogLevel},
+};
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_ETW, processes::Syscall, security::create_security_attributes};
-use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
+use shared_std::{
+    constants::PIPE_FOR_ETW, processes::Syscall, security::create_security_attributes,
+};
+use std::{
+    os::windows::io::{AsHandle, AsRawHandle},
+    sync::Arc,
+};
+use tokio::{
+    io::AsyncReadExt,
+    net::windows::named_pipe::{NamedPipeServer, ServerOptions},
+    sync::mpsc::Sender,
+};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
-use crate::{engine::PPL_SERVICE_PID, utils::log::{Log, LogLevel}};
 
 /// Starts the IPC server for the ETW running from PPL
 pub async fn run_ipc_for_etw(tx: Sender<Syscall>) {
-        // Store the pointer in the atomic so we can safely access it across 
+    // Store the pointer in the atomic so we can safely access it across
     let mut sec_attr = create_security_attributes();
 
     // SAFETY: Null pointer checked at start of function
-    let mut server = unsafe {ServerOptions::new()
-        .first_pipe_instance(true)
-        .create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _)
-        .expect("[-] Unable to create named pipe server for ETW receiver")};
+    let mut server = unsafe {
+        ServerOptions::new()
+            .first_pipe_instance(true)
+            .create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _)
+            .expect("[-] Unable to create named pipe server for ETW receiver")
+    };
 
     let tx_arc = Arc::new(tx);
-    
+
     let _ = tokio::spawn(async move {
-        
         loop {
             let logger = Log::new();
-            // wait for a connection 
-            server.connect().await.expect("Could not get a client connection for ETW ipc");
+            // wait for a connection
+            server
+                .connect()
+                .await
+                .expect("Could not get a client connection for ETW ipc");
             let mut connected_client = server;
 
             let mut sec_attr = create_security_attributes();
-            
+
             // SAFETY: null pointer checked above
-            server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_ETW, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for ETW pipe listener") };
+            server = unsafe {
+                ServerOptions::new()
+                    .create_with_security_attributes_raw(
+                        PIPE_FOR_ETW,
+                        &mut sec_attr as *mut _ as *mut _,
+                    )
+                    .expect("Unable to create new version of IPC for ETW pipe listener")
+            };
             let tx_cl: Arc<Sender<Syscall>> = Arc::clone(&tx_arc);
-            
+
             //
-            // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
+            // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so,
             // transmit the data via the mpsc to the core loop.
             //
             let _ = tokio::spawn(async move {
-
                 let mut buffer = vec![0; 1024];
                 match connected_client.read(&mut buffer).await {
                     Ok(bytes_read) => {
@@ -58,37 +80,45 @@ pub async fn run_ipc_for_etw(tx: Sender<Syscall>) {
                                         // todo this is bad and should do something
                                         eprintln!("!!!!!!!!!!!!! GOT NO PID");
                                         todo!()
-                                    },
+                                    }
                                 };
                                 // SAFETY: The PPL_SERVICE_PID is only initialised once mutably, so is safe to read.
-                                if pipe_pid != unsafe {PPL_SERVICE_PID} {
+                                if pipe_pid != unsafe { PPL_SERVICE_PID } {
                                     // todo this is bad and should do something
                                     eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                 }
 
-                                // 
-                                // Send the data via the channel to the engine 
+                                //
+                                // Send the data via the channel to the engine
                                 //
                                 if let Err(e) = tx_cl.send(etw_msg).await {
-                                    logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from ETW. {e}"));
+                                    logger.log(
+                                        LogLevel::Error,
+                                        &format!(
+                                            "Error sending message from IPC msg from ETW. {e}"
+                                        ),
+                                    );
                                 }
-                            },
-                            Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}")),
+                            }
+                            Err(e) => logger.log(
+                                LogLevel::Error,
+                                &format!("Error converting data to Syscall. {e}"),
+                            ),
                         }
-                    },
+                    }
                     Err(e) => {
                         logger.log(LogLevel::Error, &format!("Error reading IPC buffer. {e}"));
-                    },
+                    }
                 }
             });
         }
     });
 }
 
-/// Gets the PID that sent the named pipe, to ensure the pid we receive the message from is the same as the 
+/// Gets the PID that sent the named pipe, to ensure the pid we receive the message from is the same as the
 /// pid wrapped inside the message - prevents false messages being sent to the server where an attacker may wish
 /// to use a raw syscall and spoof the pipe message.
-/// 
+///
 /// # Returns
 /// - The PID as a u32 if success
 /// - Otherwise, None

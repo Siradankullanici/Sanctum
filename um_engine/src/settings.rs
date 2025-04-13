@@ -10,7 +10,7 @@ pub trait SanctumSettingsImpl {
 }
 
 impl SanctumSettingsImpl for SanctumSettings {
-    fn load() -> Self {       
+    fn load() -> Self {
         let log = Log::new();
 
         let username = get_logged_in_username().unwrap();
@@ -41,16 +41,17 @@ impl SanctumSettingsImpl for SanctumSettings {
             };
             match serde_json::from_str(&settings) {
                 Ok(s) => s,
-                Err(e) => log.panic(&format!("Could not deserialise string to SanctumSettings when reading. {e}")),
+                Err(e) => log.panic(&format!(
+                    "Could not deserialise string to SanctumSettings when reading. {e}"
+                )),
             }
         };
 
         settings
     }
 
-
     /// Update the settings fields in place
-    fn update_settings(&mut self, settings: SanctumSettings) -> Self{
+    fn update_settings(&mut self, settings: SanctumSettings) -> Self {
         // update self fields in memory
         self.common_scan_areas = settings.clone().common_scan_areas;
 
@@ -63,8 +64,8 @@ impl SanctumSettingsImpl for SanctumSettings {
     }
 }
 
- /// Get the base path and file name of the settings file, from the AppData folder.
- pub fn get_setting_paths(username: &String) -> (PathBuf, PathBuf) {
+/// Get the base path and file name of the settings file, from the AppData folder.
+pub fn get_setting_paths(username: &String) -> (PathBuf, PathBuf) {
     let base_path = format!("C:\\Users\\{username}\\AppData\\Roaming\\Sanctum\\");
     let dir = PathBuf::from(&base_path);
     let path = PathBuf::from(format!("{}\\config.cfg", base_path));

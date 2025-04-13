@@ -7,26 +7,26 @@
 use engine::Engine;
 use utils::log::Log;
 
-mod driver_manager;
-mod strings;
-mod settings;
-mod filescanner;
-mod utils;
-mod gui_communication;
 mod core;
+mod driver_manager;
 mod engine;
-
+mod filescanner;
+mod gui_communication;
+mod settings;
+mod strings;
+mod utils;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-
     //
-    // Start the engine, this will kick off and run the application; note this should never return, 
+    // Start the engine, this will kick off and run the application; note this should never return,
     // unless an error occurred.
     //
     let error = Engine::start().await;
-    
-    let logger = Log::new();
-    logger.panic(&format!("A fatal error occurred in Engine::start() causing the application to crash. {:?}", error));
 
+    let logger = Log::new();
+    logger.panic(&format!(
+        "A fatal error occurred in Engine::start() causing the application to crash. {:?}",
+        error
+    ));
 }

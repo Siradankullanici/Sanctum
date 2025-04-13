@@ -1,8 +1,8 @@
 //! The main setup and more general functions for the driver manager module for the usermode engine
 
-use std::{os::windows::ffi::OsStrExt, path::PathBuf};
 use shared_no_std::constants::{DRIVER_UM_NAME, SANC_SYS_FILE_LOCATION, SVC_NAME};
 use shared_std::driver_manager::DriverState;
+use std::{os::windows::ffi::OsStrExt, path::PathBuf};
 use windows::{
     core::PCWSTR,
     Win32::{
@@ -16,9 +16,9 @@ use crate::{strings::ToUnicodeString, utils::log::Log};
 /// The SanctumDriverManager holds key information to be shared between
 /// modules which relates to uniquely identifiable attributes such as its name
 /// and other critical settings.
-/// 
+///
 /// # Safety
-/// 
+///
 /// The structure implements Send and Sync for the Handle stored in DriverHandleRaii. This should be safe as all accesses to the driver handle
 /// will live for the lifetime of the object. If the handle could be null, the wrapping Option **should** be None.
 pub struct SanctumDriverManager {
@@ -29,7 +29,6 @@ pub struct SanctumDriverManager {
     pub state: DriverState,
     pub log: Log,
 }
-
 
 impl SanctumDriverManager {
     /// Generate a new instance of the driver manager, which initialises the device name path and symbolic link path
@@ -42,9 +41,16 @@ impl SanctumDriverManager {
 
         let appdata = match std::env::var("APPDATA") {
             Ok(a) => a,
-            Err(e) => log.panic(&format!("Could not find App Data folder in environment variables. {e}")),
+            Err(e) => log.panic(&format!(
+                "Could not find App Data folder in environment variables. {e}"
+            )),
         };
-        let sys_file_path: Vec<u16> = PathBuf::from(appdata).join(SANC_SYS_FILE_LOCATION).as_os_str().encode_wide().chain(std::iter::once(0)).collect();
+        let sys_file_path: Vec<u16> = PathBuf::from(appdata)
+            .join(SANC_SYS_FILE_LOCATION)
+            .as_os_str()
+            .encode_wide()
+            .chain(std::iter::once(0))
+            .collect();
 
         let svc_name = SVC_NAME.to_u16_vec();
 
@@ -52,9 +58,11 @@ impl SanctumDriverManager {
         // todo this eventually should be in the actual install directory under Windows
         let x = unsafe { GetFileAttributesW(PCWSTR::from_raw(sys_file_path.as_ptr())) };
         if x == INVALID_FILE_ATTRIBUTES {
-            panic!("[-] Cannot find sanctum.sys. Err: {}. Ensure the driver file is at: {:?}", unsafe {
-                GetLastError().0
-            }, sys_file_path);
+            panic!(
+                "[-] Cannot find sanctum.sys. Err: {}. Ensure the driver file is at: {:?}",
+                unsafe { GetLastError().0 },
+                sys_file_path
+            );
         }
 
         let mut instance = SanctumDriverManager {
@@ -110,7 +118,6 @@ impl Drop for DriverHandleRaii {
         }
     }
 }
-
 
 // /// Gets the path to the .sys file on the target device, for the time being this needs to be
 // /// located in the same folder as where this usermode exe is run from.

@@ -1,48 +1,72 @@
 //! The Sanctum EDR DLL which is injected into processes needs a way to communicate
 //! with the engine, and this module provides the functionality for this.
 
-use std::{os::windows::io::{AsHandle, AsRawHandle}, sync::Arc};
 use serde_json::from_slice;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::{DLLMessage, Syscall}, security::create_security_attributes};
-use tokio::{io::AsyncReadExt, net::windows::named_pipe::{NamedPipeServer, ServerOptions}, sync::mpsc::Sender};
+use shared_std::{
+    constants::PIPE_FOR_INJECTED_DLL,
+    processes::{DLLMessage, Syscall},
+    security::create_security_attributes,
+};
+use std::{
+    os::windows::io::{AsHandle, AsRawHandle},
+    sync::Arc,
+};
+use tokio::{
+    io::AsyncReadExt,
+    net::windows::named_pipe::{NamedPipeServer, ServerOptions},
+    sync::mpsc::Sender,
+};
 use windows::Win32::{Foundation::HANDLE, System::Pipes::GetNamedPipeClientProcessId};
 
 use crate::utils::log::{Log, LogLevel};
 
 /// Starts the IPC server for the DLL injected into processes to communicate with
 pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
-    // Store the pointer in the atomic so we can safely access it across 
+    // Store the pointer in the atomic so we can safely access it across
     let mut sec_attr = create_security_attributes();
 
     // SAFETY: Null pointer checked at start of function
-    let mut server = unsafe {ServerOptions::new()
-        .first_pipe_instance(true)
-        .create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, &mut sec_attr as *mut _ as *mut _)
-        .expect("[-] Unable to create named pipe server for injected DLL")};
+    let mut server = unsafe {
+        ServerOptions::new()
+            .first_pipe_instance(true)
+            .create_with_security_attributes_raw(
+                PIPE_FOR_INJECTED_DLL,
+                &mut sec_attr as *mut _ as *mut _,
+            )
+            .expect("[-] Unable to create named pipe server for injected DLL")
+    };
 
     let tx_arc = Arc::new(tx);
-    
+
     let _ = tokio::spawn(async move {
-        
         loop {
             let logger = Log::new();
-            // wait for a connection 
-            server.connect().await.expect("Could not get a client connection for injected DLL ipc");
+            // wait for a connection
+            server
+                .connect()
+                .await
+                .expect("Could not get a client connection for injected DLL ipc");
             let mut connected_client = server;
-            
+
             // Construct the next server before sending the one we have onto a task, which ensures
             // the server isn't closed
             let mut sec_attr = create_security_attributes();
             // SAFETY: null pointer checked above
-            server = unsafe { ServerOptions::new().create_with_security_attributes_raw(PIPE_FOR_INJECTED_DLL, &mut sec_attr as *mut _ as *mut _).expect("Unable to create new version of IPC for injected DLL") };
+            server = unsafe {
+                ServerOptions::new()
+                    .create_with_security_attributes_raw(
+                        PIPE_FOR_INJECTED_DLL,
+                        &mut sec_attr as *mut _ as *mut _,
+                    )
+                    .expect("Unable to create new version of IPC for injected DLL")
+            };
             let tx_cl: Arc<Sender<Syscall>> = Arc::clone(&tx_arc);
-            
+
             //
-            // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so, 
+            // Read the IPC request, ensure we can actually read bytes from it (and that it casts as a Syscall type) - if so,
             // transmit the data via the mpsc to the core loop.
             //
             let _ = tokio::spawn(async move {
-
                 let mut buffer = vec![0; 1024];
                 match connected_client.read(&mut buffer).await {
                     Ok(bytes_read) => {
@@ -58,8 +82,8 @@ pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
                             Ok(message) => {
                                 match message {
                                     DLLMessage::SyscallWrapper(syscall) => {
-                                        // 
-                                        // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an 
+                                        //
+                                        // As part of the Ghost Hunting technique, one way I have thought up to bypass this would be to spoof an
                                         // IPC from the malware saying you are performing an operation via a hooked syscall; when in actuality you are
                                         // using direct syscalls to evade detection etc.
                                         //
@@ -73,7 +97,7 @@ pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
                                                 // todo this is bad and should do something
                                                 eprintln!("!!!!!!!!!!!!! GOT NO PID");
                                                 todo!()
-                                            },
+                                            }
                                         };
                                         if pipe_pid != syscall.pid {
                                             // todo this is bad and should do something
@@ -83,29 +107,32 @@ pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
                                         if let Err(e) = tx_cl.send(syscall).await {
                                             logger.log(LogLevel::Error, &format!("Error sending message from IPC msg from DLL. {e}"));
                                         }
-                                    },
+                                    }
                                     DLLMessage::NtdllOverwrite => {
                                         // todo
                                         println!("[i] NTDLL manipulation detected!");
-                                    },
+                                    }
                                 }
-                            },
-                            Err(e) => logger.log(LogLevel::Error, &format!("Error converting data to Syscall. {e}. Got: {s}")),
+                            }
+                            Err(e) => logger.log(
+                                LogLevel::Error,
+                                &format!("Error converting data to Syscall. {e}. Got: {s}"),
+                            ),
                         }
-                    },
+                    }
                     Err(e) => {
                         logger.log(LogLevel::Error, &format!("Error reading IPC buffer. {e}"));
-                    },
+                    }
                 }
             });
         }
     });
 }
 
-/// Gets the PID that sent the named pipe, to ensure the pid we receive the message from is the same as the 
+/// Gets the PID that sent the named pipe, to ensure the pid we receive the message from is the same as the
 /// pid wrapped inside the message - prevents false messages being sent to the server where an attacker may wish
 /// to use a raw syscall and spoof the pipe message.
-/// 
+///
 /// # Returns
 /// - The PID as a u32 if success
 /// - Otherwise, None

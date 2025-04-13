@@ -1,4 +1,8 @@
-use std::{fs::{self, OpenOptions}, io::Write, path::PathBuf};
+use std::{
+    fs::{self, OpenOptions},
+    io::Write,
+    path::PathBuf,
+};
 
 use shared_no_std::constants::LOG_PATH;
 
@@ -16,7 +20,7 @@ pub enum LogLevel {
     Warning,
     Success,
     Error,
-    NearFatal
+    NearFatal,
 }
 
 impl Log {
@@ -36,14 +40,14 @@ impl Log {
             fs::create_dir_all(log_dir).expect("[-] Unable to create directory file.");
             fs::write(&log_path, "").expect("[-] Unable to write log file.");
         }
-        
+
         Log {
             log_file_path: get_log_file_path(),
         }
     }
 
     /// Logs the message and panics.
-    /// 
+    ///
     /// # Warning
     /// This function does not return and will panic.
     #[track_caller]
@@ -53,12 +57,17 @@ impl Log {
             .create(true)
             .append(true)
             .open(&self.log_file_path)
-            .expect(format!("[fatal] Unable to open log file: {}", self.log_file_path.display()).as_str());
+            .expect(
+                format!(
+                    "[fatal] Unable to open log file: {}",
+                    self.log_file_path.display()
+                )
+                .as_str(),
+            );
 
         // write to the file
-        writeln!(file, "{}", msg)
-                .expect("Unable to write to log file");
-            
+        writeln!(file, "{}", msg).expect("Unable to write to log file");
+
         panic!("[fatal] {}", msg);
     }
 
@@ -69,11 +78,16 @@ impl Log {
             .create(true)
             .append(true)
             .open(&self.log_file_path)
-            .expect(format!("[fatal] Unable to open log file: {}", self.log_file_path.display()).as_str());
+            .expect(
+                format!(
+                    "[fatal] Unable to open log file: {}",
+                    self.log_file_path.display()
+                )
+                .as_str(),
+            );
 
         // write to the file
-        writeln!(file, "{}", msg)
-                .expect("Unable to write to log file");
+        writeln!(file, "{}", msg).expect("Unable to write to log file");
 
         // console log the message
         match level {

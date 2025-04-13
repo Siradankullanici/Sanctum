@@ -1,18 +1,26 @@
-//! File scanner module 
-//! 
+//! File scanner module
+//!
 //! This module provides functionality for scanning files and retrieving relevant
-//! information about a file that the EDR may want to use in decision making. 
+//! information about a file that the EDR may want to use in decision making.
 
-use std::{collections::BTreeSet, fs::{self, File}, io::{self, BufRead, BufReader, Read, Write}, os::windows::fs::MetadataExt, path::PathBuf, sync::{Arc, Mutex}, thread, time::{Duration, Instant}};
 use md5::{Digest, Md5};
 use shared_no_std::constants::{IOC_LIST_LOCATION, IOC_URL};
 use shared_std::file_scanner::{FileScannerState, MatchedIOC, ScanningLiveInfo};
+use std::{
+    collections::BTreeSet,
+    fs::{self, File},
+    io::{self, BufRead, BufReader, Read, Write},
+    os::windows::fs::MetadataExt,
+    path::PathBuf,
+    sync::{Arc, Mutex},
+    thread,
+    time::{Duration, Instant},
+};
 
 use crate::utils::log::{Log, LogLevel};
 
-
 /// The FileScanner is the public interface into the module handling any static file scanning type capability.
-/// This struct is public for visibility from lib.rs the core of um_engine, but it not intended to be accessed from the 
+/// This struct is public for visibility from lib.rs the core of um_engine, but it not intended to be accessed from the
 /// Tauri application - for handling state (which tauri will need to interact with), see FileScannerState
 pub struct FileScanner {
     // iocs:
@@ -48,11 +56,9 @@ impl SLI for ScanningLiveInfo {
     }
 }
 
-
 impl FileScanner {
     /// Construct a new instance of the FileScanner with no parameters.
     pub async fn new() -> Result<Self, std::io::Error> {
-
         let log = Log::new();
 
         //
@@ -66,19 +72,27 @@ impl FileScanner {
         let file = match File::open(&ioc_location) {
             Ok(f) => f,
             Err(e) => {
-                log.log(LogLevel::Warning, format!("[-] IOC list not found, downloading to {}.", ioc_location).as_str());
+                log.log(
+                    LogLevel::Warning,
+                    format!("[-] IOC list not found, downloading to {}.", ioc_location).as_str(),
+                );
                 if e.kind() == io::ErrorKind::NotFound {
-                    let file_data = reqwest::get(IOC_URL)
-                        .await.unwrap()
-                        .text().await.unwrap();
-                    let mut f = File::create_new(&ioc_location).expect(format!("[-] Could not create new file for IOCs. Loc: {}", ioc_location).as_str());
-                    f.write_all(file_data.as_bytes()).expect("[-] Could not write data for IOCs");
-                    
+                    let file_data = reqwest::get(IOC_URL).await.unwrap().text().await.unwrap();
+                    let mut f = File::create_new(&ioc_location).expect(
+                        format!(
+                            "[-] Could not create new file for IOCs. Loc: {}",
+                            ioc_location
+                        )
+                        .as_str(),
+                    );
+                    f.write_all(file_data.as_bytes())
+                        .expect("[-] Could not write data for IOCs");
+
                     f
                 } else {
                     panic!("[-] Unknown error occurred when trying to ingest IOC files. {e}");
                 }
-            },
+            }
         };
         let lines = BufReader::new(file).lines();
 
@@ -86,16 +100,13 @@ impl FileScanner {
             bts.insert(line);
         }
 
-        Ok(
-            FileScanner {
-                iocs: bts,
-                state: Arc::new(Mutex::new(FileScannerState::Inactive)),
-                scanning_info: Arc::new(Mutex::new(ScanningLiveInfo::new())),
-                log,
-            }
-        )
+        Ok(FileScanner {
+            iocs: bts,
+            state: Arc::new(Mutex::new(FileScannerState::Inactive)),
+            scanning_info: Arc::new(Mutex::new(ScanningLiveInfo::new())),
+            log,
+        })
     }
-    
 
     pub fn scan_started(&self) {
         let mut lock = self.state.lock().unwrap();
@@ -103,7 +114,6 @@ impl FileScanner {
         // reset the stats
         self.scanning_info.lock().unwrap().reset();
     }
-
 
     /// Checks whether a scan is in progress
     pub fn is_scanning(&self) -> bool {
@@ -117,23 +127,25 @@ impl FileScanner {
         }
     }
 
-
     /// Updates the internal is_scanning state to false
     pub fn end_scan(&self) {
         let mut lock = self.state.lock().unwrap();
         *lock = FileScannerState::Inactive;
     }
 
-
     /// Scan the file held by the FileScanner against a set of known bad hashes
-    /// 
+    ///
     /// # Returns
-    /// 
+    ///
     /// The function will return a tuple of Ok (String, PathBuf) if there were no IO errors, and the result of the Ok will be an Option of type
-    /// (String, PathBuf). If the function returns None, then there was no hash match made for malware. 
-    /// 
+    /// (String, PathBuf). If the function returns None, then there was no hash match made for malware.
+    ///
     /// If it returns the Some variant, the hash of the IOC will be returned for post-processing and decision making, as well as the file name / path as PathBuf.
-    fn scan_file_against_hashes(&self, target: &PathBuf, files_scanned: &Arc<Mutex<u32>>) -> Result<Option<(String, PathBuf)>, std::io::Error>{
+    fn scan_file_against_hashes(
+        &self,
+        target: &PathBuf,
+        files_scanned: &Arc<Mutex<u32>>,
+    ) -> Result<Option<(String, PathBuf)>, std::io::Error> {
         //
         // In order to not read the whole file into memory (would be bad if the file size is > the amount of RAM available)
         // I've decided to loop over an array of 1024 bytes at at time until the end of the file, and use the hashing crate sha2
@@ -163,17 +175,16 @@ impl FileScanner {
                     file_size
                 } else {
                     MAX_HEAP_SIZE
-                }                    
+                }
             } else {
                 // if there was an error getting the metadata, default to the max size
                 MAX_HEAP_SIZE
             };
 
-
             let mut buf = vec![0u8; alloc_size];
 
             // let mut buf = vec![0u8; alloc_size];
-            
+
             //
             // ingest the file and update hash value per chunk(if chunking)
             //
@@ -187,10 +198,12 @@ impl FileScanner {
                 }
 
                 let count = reader.read(&mut buf)?;
-                if count == 0 {break;}
+                if count == 0 {
+                    break;
+                }
                 hasher.update(&buf[..count]);
             }
-            
+
             hasher.finalize()
         };
         let hash: String = hash.iter().map(|byte| format!("{:02X}", byte)).collect();
@@ -200,7 +213,7 @@ impl FileScanner {
             let mut files_scanned = files_scanned.lock().unwrap();
             *files_scanned += 1;
         }
-        
+
         // check the BTreeSet
         if self.iocs.contains(hash.as_str()) {
             // if we have a match on the malware..
@@ -209,14 +222,11 @@ impl FileScanner {
 
         // No malware found
         Ok(None)
-
     }
 
-
-    /// Public API entry point, scans from a root folder including all children, this can be used on a small 
+    /// Public API entry point, scans from a root folder including all children, this can be used on a small
     /// scale for a folder scan, or used to initiate a system scan.
     pub fn begin_scan(&self, input_dirs: Vec<PathBuf>) -> Result<FileScannerState, io::Error> {
-        
         let mut discovered_dirs: Vec<PathBuf> = Vec::new();
 
         // If the target is a directory, then add it back to the discovered dirs as that will be iterated
@@ -234,7 +244,7 @@ impl FileScanner {
                     target = t;
                 }
             }
-        }        
+        }
 
         let stop_clock = Arc::new(Mutex::new(false));
         let clock_clone = Arc::clone(&stop_clock);
@@ -271,7 +281,7 @@ impl FileScanner {
                 std::thread::sleep(Duration::from_millis(10));
             }
         });
-        
+
         // if the target is a FILE, then scan only the 1 file
         if !target.is_dir() {
             let res = self.scan_file_against_hashes(&target, &files_scanned_for_scanner);
@@ -279,20 +289,18 @@ impl FileScanner {
                 Ok(res) => {
                     if let Some(v) = res {
                         let mut lock = self.scanning_info.lock().unwrap();
-                        lock.scan_results.push(
-                            MatchedIOC {
-                                hash: v.0,
-                                file: v.1,
-                            }
-                        );
-                        
+                        lock.scan_results.push(MatchedIOC {
+                            hash: v.0,
+                            file: v.1,
+                        });
+
                         // result will contain the matched IOC
                         *stop_clock.lock().unwrap() = true;
                         return Ok(FileScannerState::Finished);
                     }
 
                     return Ok(FileScannerState::Finished);
-                },
+                }
                 Err(e) => {
                     *stop_clock.lock().unwrap() = true;
 
@@ -302,28 +310,32 @@ impl FileScanner {
                     }
 
                     return Err(e);
-                },
+                }
             }
         }
 
         // otherwise, we are a directory so start this off
         while !discovered_dirs.is_empty() {
-
             // pop a directory
             let target = discovered_dirs.pop();
-            if target.is_none() { continue; }
+            if target.is_none() {
+                continue;
+            }
 
             // attempt to read the directory, if we don't have permission, continue to next item.
             let read_dir = fs::read_dir(target.unwrap());
-            if read_dir.is_err() { continue; }
+            if read_dir.is_err() {
+                continue;
+            }
 
             for entry in read_dir.unwrap() {
                 let entry = match entry {
                     Ok(b) => b,
                     Err(e) => {
-                        self.log.log(LogLevel::Warning, &format!("[-] Error with entry, e: {e}"));
+                        self.log
+                            .log(LogLevel::Warning, &format!("[-] Error with entry, e: {e}"));
                         continue;
-                    },
+                    }
                 };
 
                 // check whether the scan is cancelled
@@ -332,7 +344,10 @@ impl FileScanner {
                     if *lock == FileScannerState::Cancelled {
                         // todo update the error type of this fn to something more flexible
                         *stop_clock.lock().unwrap() = true;
-                        return Err(io::Error::new(io::ErrorKind::Uncategorized, "User cancelled scan."));
+                        return Err(io::Error::new(
+                            io::ErrorKind::Uncategorized,
+                            "User cancelled scan.",
+                        ));
                     }
                 }
 
@@ -342,7 +357,7 @@ impl FileScanner {
                 // i suspect large file size ingests is causing the difference in speed as it reads it
                 // into a buffer.
 
-                // add the folder to the next iteration 
+                // add the folder to the next iteration
                 if path.is_dir() {
                     discovered_dirs.push(path);
                     continue; // keep searching for a file
@@ -361,8 +376,10 @@ impl FileScanner {
                                 file: v.1,
                             });
                         }
-                    },
-                    Err(e) => self.log.log(LogLevel::Warning, &format!("[-] Error scanning: {e}")),
+                    }
+                    Err(e) => self
+                        .log
+                        .log(LogLevel::Warning, &format!("[-] Error scanning: {e}")),
                 }
             }
         }
@@ -370,20 +387,17 @@ impl FileScanner {
         *stop_clock.lock().unwrap() = true;
 
         Ok(FileScannerState::Finished)
-
     }
 
-
     /// Public entrypoint for scanning, taking in a target file / folder, and the scan type.
-    /// 
+    ///
     /// This function ensures all state is accurate for whether a scan is in progress etc.
-    /// 
+    ///
     /// # Returns
-    /// 
-    /// The function will return the enum ScanResult which 'genericifies' the return type to give flexibility to 
+    ///
+    /// The function will return the enum ScanResult which 'genericifies' the return type to give flexibility to
     /// allowing the function to conduct different types of scan. This will need checking in the calling function.
     pub fn start_scan(&self, target: Vec<PathBuf>) -> FileScannerState {
-        
         // check whether a scan is active
         if self.is_scanning() {
             return FileScannerState::Scanning;
@@ -398,14 +412,11 @@ impl FileScanner {
 
         let result = match result {
             Ok(state) => state,
-            Err(e) => {
-                FileScannerState::FinishedWithError(e.to_string())
-            },
+            Err(e) => FileScannerState::FinishedWithError(e.to_string()),
         };
 
         result
     }
-
 
     /// Instructs the scanner to cancel its scan, returning information about the results
     pub fn cancel_scan(&self) -> Option<ScanningLiveInfo> {
@@ -422,16 +433,13 @@ impl FileScanner {
         None
     }
 
-
     /// Gets the state of the scanner
     pub fn get_state(&self) -> FileScannerState {
         let lock = self.state.lock().unwrap();
         lock.clone()
     }
 
-
     pub fn scanner_get_scan_data(&self) -> ScanningLiveInfo {
         self.scanning_info.lock().unwrap().clone()
     }
-
 }
