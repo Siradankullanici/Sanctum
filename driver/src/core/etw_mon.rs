@@ -26,7 +26,7 @@ pub fn monitor_kernel_etw() {
         Err(_) => {
             println!("[sanctum] [-] Failed to start the monitoring of guid enabled mask, kernel ETW is not being monitored.");
             return;
-        },
+        }
     };
 
     if monitor_etw_dispatch_table().is_err() {
@@ -104,8 +104,8 @@ fn monitor_etw_dispatch_table() -> Result<(), ()> {
         Ok(t) => t,
         Err(_) => {
             println!("[sanctum] [-] Could not get the ETW Kernel table");
-            return Ok(())
-        },
+            return Ok(());
+        }
     };
 
     // use my `wdk-mutex` crate to wrap the ETW table in a mutex and have it globally accessible
@@ -297,26 +297,25 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
 
         // Check if we have received the cancellation flag, without this check we will get a BSOD. This flag will be
         // set to true on DriverExit.
-        let terminate_flag_lock: &FastMutex<bool> = match Grt::get_fast_mutex(
-            "TERMINATION_FLAG_ETW_MONITOR",
-        ) {
-            Ok(lock) => lock,
-            Err(e) => {
-                // Maybe this should terminate the thread instead? This would be a bad error to have as it means we cannot.
-                // instruct the thread to terminate cleanly on driver exit. Or maybe do a count with max tries? We shall see.
-                println!(
+        let terminate_flag_lock: &FastMutex<bool> =
+            match Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR") {
+                Ok(lock) => lock,
+                Err(e) => {
+                    // Maybe this should terminate the thread instead? This would be a bad error to have as it means we cannot.
+                    // instruct the thread to terminate cleanly on driver exit. Or maybe do a count with max tries? We shall see.
+                    println!(
                     "[sanctum] [-] Error getting fast mutex for TERMINATION_FLAG_ETW_MONITOR. {:?}",
                     e
                 );
-                continue;
-            }
-        };
+                    continue;
+                }
+            };
         let lock = match terminate_flag_lock.lock() {
             Ok(lock) => lock,
             Err(e) => {
                 println!("[sanctum] [-] Failed to lock mutex for terminate_flag_lock");
                 continue;
-            },
+            }
         };
         if *lock {
             break;
@@ -715,7 +714,8 @@ pub fn get_silo_etw_struct_address() -> Result<*const EtwSiloDriverState, ()> {
     Ok(unsafe { *address })
 }
 
-pub fn traverse_guid_tables_for_etw_monitoring_data() -> Result<(BTreeMap<String, u32>, RegEntryEtwMaskBTreeMap), ()> {
+pub fn traverse_guid_tables_for_etw_monitoring_data(
+) -> Result<(BTreeMap<String, u32>, RegEntryEtwMaskBTreeMap), ()> {
     let silo_driver_state_raw_ptr = get_silo_etw_struct_address()?;
     // SAFETY: Null pointer is checked inside of get_silo_etw_struct_address
     let first_hash_address = &(unsafe { &*silo_driver_state_raw_ptr }.guid_hash_table);
@@ -799,7 +799,7 @@ pub fn traverse_guid_tables_for_etw_monitoring_data() -> Result<(BTreeMap<String
             // Walk to the next GUID item
             // SAFETY: Null pointer dereference checked at the top of while loop
             current_guid_entry = unsafe { (*current_guid_entry).guid_list.flink as *mut GuidEntry };
-            
+
             i += 1;
 
             if i >= MAX_LINKED_LIST_TRIES {

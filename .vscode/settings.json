@@ -41,6 +41,7 @@
         "lpthread",
         "lsass",
         "malphas",
+        "minifilter",
         "minifilters",
         "MODULEINFO",
         "movabs",

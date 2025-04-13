@@ -20,11 +20,16 @@ wdk = "0.3"
 wdk-alloc = "0.3"
 wdk-sys = "0.3"
 wdk-panic = "0.3"
+# For local testing of my wdk open-source contributions
+# wdk = { path="../../windows-drivers-rs/crates/wdk", version = "0.3"}
+# wdk-alloc = { path="../../windows-drivers-rs/crates/wdk-alloc", version = "0.3"}
+# wdk-sys = { path="../../windows-drivers-rs/crates/wdk-sys", version = "0.3", features = ["filesystem"]}
+# wdk-panic = { path="../../windows-drivers-rs/crates/wdk-panic", version = "0.3"}
+
 shared_no_std = { path = "../shared_no_std", default-features = false }
 serde_json = {version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"]}
 wdk-mutex = "1"
-# wdk-mutex = {path = "../../wdk_mutex"}
 
 [profile.dev]
 panic = "abort"
@@ -36,3 +41,5 @@ lto = true
 
 [build-dependencies]
 wdk-build = "0.3"
+# For local testing of my wdk open-source contributions
+# wdk-build = { path="../../windows-drivers-rs/crates/wdk-build", version = "0.3"}
