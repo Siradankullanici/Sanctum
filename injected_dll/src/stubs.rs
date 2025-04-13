@@ -213,7 +213,7 @@ pub fn nt_protect_virtual_memory(
                 // In this case - we will simply terminate the process.
                 // todo - handle more gracefully in the future.
                 println!("[sanctum] [!] NTDLL tampering detected, attempting to alter memory protections on NTDLL. Base address: {:p}, new protect: {:b}. No bytes: {}", target_base as *const c_void, new_access_protect, unsafe { *no_bytes_to_protect});
-                std::process::exit(12345678);
+                std::process::exit(0x12345678);
             }
     }
 
