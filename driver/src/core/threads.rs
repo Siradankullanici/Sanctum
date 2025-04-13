@@ -3,7 +3,7 @@
 use core::ffi::c_void;
 
 use wdk::println;
-use wdk_sys::{ntddk::PsSetCreateThreadNotifyRoutine, BOOLEAN};
+use wdk_sys::{BOOLEAN, ntddk::PsSetCreateThreadNotifyRoutine};
 
 /// Instructs the driver to register the thread creation callback routine.
 pub fn set_thread_creation_callback() {

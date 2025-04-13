@@ -10,12 +10,12 @@ use wdk_mutex::{
     grt::Grt,
 };
 use wdk_sys::{
+    _MODE::KernelMode,
+    FALSE, HANDLE, LARGE_INTEGER, STATUS_SUCCESS, THREAD_ALL_ACCESS, UNICODE_STRING,
     ntddk::{
         KeBugCheckEx, KeDelayExecutionThread, MmGetSystemRoutineAddress, ObReferenceObjectByHandle,
         PsCreateSystemThread, PsTerminateSystemThread, RtlInitUnicodeString,
     },
-    FALSE, HANDLE, LARGE_INTEGER, STATUS_SUCCESS, THREAD_ALL_ACCESS, UNICODE_STRING,
-    _MODE::KernelMode,
 };
 
 /// Entrypoint for monitoring kernel ETW structures to detect rootkits or other ETW manipulation
@@ -24,30 +24,40 @@ pub fn monitor_kernel_etw() {
     let guid_map = match traverse_guid_tables_for_etw_monitoring_data() {
         Ok(g) => g,
         Err(_) => {
-            println!("[sanctum] [-] Failed to start the monitoring of guid enabled mask, kernel ETW is not being monitored.");
+            println!(
+                "[sanctum] [-] Failed to start the monitoring of guid enabled mask, kernel ETW is not being monitored."
+            );
             return;
         }
     };
 
     if monitor_etw_dispatch_table().is_err() {
-        println!("[sanctum] [-] Failed to start the monitoring of ETW Table, kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Failed to start the monitoring of ETW Table, kernel ETW is not being monitored."
+        );
         return;
     }
 
     if monitor_system_logger_bitmask().is_err() {
-        println!("[sanctum] [-] Failed to start the monitoring of system logging ETW bitmask, kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Failed to start the monitoring of system logging ETW bitmask, kernel ETW is not being monitored."
+        );
         return;
     }
 
     // Add any returned maps to the Grt for mutex use - it's possible some functions don't expose their maps
     // and implement them internally, that is fine.
     if Grt::register_fast_mutex("etw_guid_table", guid_map.0).is_err() {
-        println!("[sanctum] [-] Could not register wdk-mutex for etw_guid_table, kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Could not register wdk-mutex for etw_guid_table, kernel ETW is not being monitored."
+        );
         return;
     }
 
     if Grt::register_fast_mutex("etw_guid_reg_entry_mask", guid_map.1).is_err() {
-        println!("[sanctum] [-] Could not register wdk-mutex for etw_guid_reg_entry_mask, kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Could not register wdk-mutex for etw_guid_reg_entry_mask, kernel ETW is not being monitored."
+        );
         return;
     }
 
@@ -67,7 +77,9 @@ pub fn monitor_kernel_etw() {
     };
 
     if thread_status != STATUS_SUCCESS {
-        println!("[sanctum] [-] Could not create new thread for monitoring ETW patching, kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Could not create new thread for monitoring ETW patching, kernel ETW is not being monitored."
+        );
         return;
     }
 
@@ -85,13 +97,19 @@ pub fn monitor_kernel_etw() {
         )
     } != STATUS_SUCCESS
     {
-        println!("[sanctum] [-] Could not get thread handle by ObRef.. kernel ETW is not being monitored.");
+        println!(
+            "[sanctum] [-] Could not get thread handle by ObRef.. kernel ETW is not being monitored."
+        );
         return;
     }
 
     if Grt::register_fast_mutex("TERMINATION_FLAG_ETW_MONITOR", false).is_err() {
-        println!("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING.");
-        panic!("[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING.");
+        println!(
+            "[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING."
+        );
+        panic!(
+            "[sanctum] [-] Could not register TERMINATION_FLAG_ETW_MONITOR as a FAST_MUTEX, PANICKING."
+        );
     }
     if Grt::register_fast_mutex("ETW_THREAD_HANDLE", object).is_err() {
         println!("[sanctum] [-] Could not register ETW_THREAD_HANDLE as a FAST_MUTEX, PANICKING");
@@ -166,7 +184,9 @@ pub fn resolve_relative_symbol_offset(
     let function_address =
         unsafe { MmGetSystemRoutineAddress(&mut function_name_unicode) } as usize;
     if function_address == 0 {
-        println!("[sanctum] [-] Address of {function_name} was null whilst searching for the function address.");
+        println!(
+            "[sanctum] [-] Address of {function_name} was null whilst searching for the function address."
+        );
         return Err(EtwMonitorError::SymbolNotFound);
     }
 
@@ -259,7 +279,10 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
             let inner_ptr: *const EtwRegEntry = unsafe { *(*item.1 as *const *const EtwRegEntry) };
 
             if inner_ptr.is_null() {
-                println!("[sanctum] [!] Symbol {}: inner pointer is null, raw value found: {:?}. This is indicative of tampering.", item.0, inner_ptr);
+                println!(
+                    "[sanctum] [!] Symbol {}: inner pointer is null, raw value found: {:?}. This is indicative of tampering.",
+                    item.0, inner_ptr
+                );
                 return Err(EtwMonitorError::NullPtr);
             }
 
@@ -297,19 +320,20 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
 
         // Check if we have received the cancellation flag, without this check we will get a BSOD. This flag will be
         // set to true on DriverExit.
-        let terminate_flag_lock: &FastMutex<bool> =
-            match Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR") {
-                Ok(lock) => lock,
-                Err(e) => {
-                    // Maybe this should terminate the thread instead? This would be a bad error to have as it means we cannot.
-                    // instruct the thread to terminate cleanly on driver exit. Or maybe do a count with max tries? We shall see.
-                    println!(
+        let terminate_flag_lock: &FastMutex<bool> = match Grt::get_fast_mutex(
+            "TERMINATION_FLAG_ETW_MONITOR",
+        ) {
+            Ok(lock) => lock,
+            Err(e) => {
+                // Maybe this should terminate the thread instead? This would be a bad error to have as it means we cannot.
+                // instruct the thread to terminate cleanly on driver exit. Or maybe do a count with max tries? We shall see.
+                println!(
                     "[sanctum] [-] Error getting fast mutex for TERMINATION_FLAG_ETW_MONITOR. {:?}",
                     e
                 );
-                    continue;
-                }
-            };
+                continue;
+            }
+        };
         let lock = match terminate_flag_lock.lock() {
             Ok(lock) => lock,
             Err(e) => {
@@ -376,10 +400,9 @@ fn check_etw_guids_for_tampering_is_enabled_field() {
         };
 
         if item.1 != cache_item {
-            println!("[sanctum] [TAMPERING] Tampering detected on the GUID table. Mismatch on: {}, OG: {}, Local: {}",
-                item.0,
-                item.1,
-                cache_item,
+            println!(
+                "[sanctum] [TAMPERING] Tampering detected on the GUID table. Mismatch on: {}, OG: {}, Local: {}",
+                item.0, item.1, cache_item,
             );
             // As per my blog post - dont bug check this one as there are **some** instances of the IsEnabled field changing organically
             // (albeit seldom). Instead you should report this event for an analyst to review / threat hunt.
@@ -440,9 +463,7 @@ fn check_etw_guids_for_tampering_is_enabled_field() {
                             if baseline_mask != snapshot_mask {
                                 println!(
                                     "[sanctum] [TAMPERING] Tampering detected on the group enable mask ETW kernel structure. GUID: {}, Original mask: {}, new mask: {}",
-                                    guid,
-                                    baseline_mask,
-                                    snapshot_mask,
+                                    guid, baseline_mask, snapshot_mask,
                                 );
                             }
                         }
@@ -528,7 +549,9 @@ fn check_etw_table_for_modification() {
                 unsafe { KeBugCheckEx(0x00000109, 0, 0, 0, 0) };
             }
             EtwMonitorError::SymbolNotFound => {
-                println!("[sanctum] [-] Etw function failed with SymbolNotFound when trying to read kernel symbols.");
+                println!(
+                    "[sanctum] [-] Etw function failed with SymbolNotFound when trying to read kernel symbols."
+                );
                 return;
             }
         },
@@ -557,7 +580,9 @@ fn check_etw_table_for_modification() {
 
     if table_live_read != *table_lock {
         // As above - this should shoot some telemetry off in a real world EDR
-        println!("[sanctum] [TAMPERING] ETW Tampering detected, the ETW table does not match the current ETW table.");
+        println!(
+            "[sanctum] [TAMPERING] ETW Tampering detected, the ETW table does not match the current ETW table."
+        );
         unsafe { KeBugCheckEx(0x00000109, 0, 0, 0, 0) };
     }
 }
@@ -714,8 +739,8 @@ pub fn get_silo_etw_struct_address() -> Result<*const EtwSiloDriverState, ()> {
     Ok(unsafe { *address })
 }
 
-pub fn traverse_guid_tables_for_etw_monitoring_data(
-) -> Result<(BTreeMap<String, u32>, RegEntryEtwMaskBTreeMap), ()> {
+pub fn traverse_guid_tables_for_etw_monitoring_data()
+-> Result<(BTreeMap<String, u32>, RegEntryEtwMaskBTreeMap), ()> {
     let silo_driver_state_raw_ptr = get_silo_etw_struct_address()?;
     // SAFETY: Null pointer is checked inside of get_silo_etw_struct_address
     let first_hash_address = &(unsafe { &*silo_driver_state_raw_ptr }.guid_hash_table);

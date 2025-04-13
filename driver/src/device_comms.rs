@@ -1,8 +1,8 @@
 use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    utils::{check_driver_version, DriverError, Log},
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
+    utils::{DriverError, Log, check_driver_version},
 };
 use alloc::{format, string::String};
 use shared_no_std::{
@@ -13,9 +13,9 @@ use shared_no_std::{
 use wdk::println;
 use wdk_mutex::fast_mutex::FastMutex;
 use wdk_sys::{
+    _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
+    STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
     ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal},
-    APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS,
-    STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION,
 };
 
 /// DriverMessagesWithMutex object which contains a spinlock to allow for mutable access to the queue.
@@ -399,7 +399,9 @@ pub fn ioctl_handler_send_kernel_msgs_to_userland(pirp: PIRP) -> Result<(), Driv
     let encoded_data = match serde_json::to_vec(&data.unwrap()) {
         Ok(v) => v,
         Err(_) => {
-            println!("[sanctum] [-] Error serializing data to string in ioctl_handler_send_kernel_msgs_to_userland");
+            println!(
+                "[sanctum] [-] Error serializing data to string in ioctl_handler_send_kernel_msgs_to_userland"
+            );
             return Err(DriverError::CouldNotSerialize);
         }
     };

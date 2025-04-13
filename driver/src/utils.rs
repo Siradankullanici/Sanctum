@@ -9,17 +9,17 @@ use alloc::{
 use shared_no_std::constants::SanctumVersion;
 use wdk::println;
 use wdk_sys::{
+    FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ,
+    FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK,
+    OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, OBJECT_ATTRIBUTES, PASSIVE_LEVEL, PHANDLE,
+    POBJECT_ATTRIBUTES, STATUS_SUCCESS, STRING, UNICODE_STRING,
     ntddk::{
         KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose,
         ZwCreateFile, ZwWriteFile,
     },
-    FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK,
-    OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE,
-    POBJECT_ATTRIBUTES, STATUS_SUCCESS, STRING, UNICODE_STRING,
 };
 
-use crate::{ffi::InitializeObjectAttributes, DRIVER_MESSAGES};
+use crate::{DRIVER_MESSAGES, ffi::InitializeObjectAttributes};
 
 #[derive(Debug)]
 /// A custom error enum for the Sanctum driver
@@ -184,7 +184,9 @@ impl<'a> Log<'a> {
             )
         };
         if result.is_err() {
-            println!("[sanctum] [-] Error calling InitializeObjectAttributes. No log event taking place..");
+            println!(
+                "[sanctum] [-] Error calling InitializeObjectAttributes. No log event taking place.."
+            );
             self.log_to_userland(
                 "[-] Error calling InitializeObjectAttributes. No log event taking place.."
                     .to_string(),
@@ -226,7 +228,9 @@ impl<'a> Log<'a> {
         };
 
         if result != STATUS_SUCCESS || handle.is_null() {
-            println!("[sanctum] [-] Result of ZwCreateFile was not success - result: {result}. Returning.");
+            println!(
+                "[sanctum] [-] Result of ZwCreateFile was not success - result: {result}. Returning."
+            );
             self.log_to_userland(format!(
                 "Result of ZwCreateFile was not success - result: {result}. Returning."
             ));
@@ -295,7 +299,10 @@ impl<'a> Log<'a> {
             let obj = unsafe { &mut *DRIVER_MESSAGES.load(Ordering::SeqCst) };
             obj.add_message_to_queue(msg);
         } else {
-            println!("[sanctum] [-] Unable to log message for the attention of userland, {}. The global DRIVER_MESSAGES was null.", msg);
+            println!(
+                "[sanctum] [-] Unable to log message for the attention of userland, {}. The global DRIVER_MESSAGES was null.",
+                msg
+            );
         }
     }
 }
