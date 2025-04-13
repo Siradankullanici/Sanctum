@@ -122,7 +122,7 @@ fn monitor_etw_dispatch_table() -> Result<(), ()> {
         Ok(t) => t,
         Err(_) => {
             println!("[sanctum] [-] Could not get the ETW Kernel table");
-            return Ok(());
+            return Err(());
         }
     };
 
@@ -262,12 +262,12 @@ pub fn get_etw_dispatch_table<'a>() -> Result<BTreeMap<&'a str, *const c_void>, 
     dispatch_table.insert("EtwpMemoryProvRegHandle", unsafe {
         etwp_event_tracing_prov_reg_handle.sub(0x8)
     });
-    dispatch_table.insert("EtwCpuPartitionProvRegHandle", unsafe {
-        etwp_event_tracing_prov_reg_handle.add(0x30)
-    });
-    dispatch_table.insert("EtwCpuStarvationProvRegHandle", unsafe {
-        etwp_event_tracing_prov_reg_handle.add(0x10)
-    });
+    // dispatch_table.insert("EtwCpuPartitionProvRegHandle", unsafe {
+    //     etwp_event_tracing_prov_reg_handle.add(0x30)
+    // });
+    // dispatch_table.insert("EtwCpuStarvationProvRegHandle", unsafe {
+    //     etwp_event_tracing_prov_reg_handle.add(0x10)
+    // });
     dispatch_table.insert("EtwSecurityMitigationsRegHandle", unsafe {
         etwp_event_tracing_prov_reg_handle.add(0x18)
     });
