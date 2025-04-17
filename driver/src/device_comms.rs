@@ -4,7 +4,7 @@ use crate::{
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
     utils::{DriverError, Log, check_driver_version},
 };
-use alloc::{format, string::String};
+use alloc::{collections::{btree_map::BTreeMap, btree_set::BTreeSet}, format, string::String};
 use shared_no_std::{
     constants::SanctumVersion,
     driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated},
@@ -486,6 +486,52 @@ pub fn ioctl_handler_ping_return_struct(
     Ok(())
 }
 
+pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
+        if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
+            println!("[sanctum] [-] SystemBuffer is a null pointer in ioctl_handler_get_image_loads.");
+            return Err(DriverError::NullPtr);
+        }
+    }
+
+    // Load up the `ImageLoadQueueForInjector`. We will check to see whether it contains data; if not - we can return nothing.
+    let data = if !DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst).is_null() {
+        let obj = unsafe { &mut *DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst) };
+        obj.extract_all()
+    } else {
+        println!("[sanctum] [-] Invalid pointer");
+        return Err(DriverError::DriverMessagePtrNull);
+    };
+
+    if data.is_none() {
+        return Err(DriverError::NoDataToSend);
+    }
+
+    let encoded_data = match serde_json::to_vec(&data.unwrap()) {
+        Ok(v) => v,
+        Err(_) => {
+            println!(
+                "[sanctum] [-] Error serializing data to string in ioctl_handler_send_kernel_msgs_to_userland"
+            );
+            return Err(DriverError::CouldNotSerialize);
+        }
+    };
+
+    let size_of_struct = encoded_data.len() as u64;
+    unsafe { (*pirp).IoStatus.Information = size_of_struct };
+
+    // copy the memory into the buffer
+    unsafe {
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            encoded_data.as_ptr() as *const _,
+            size_of_struct,
+        )
+    };
+
+    Ok(())
+}
+
 /// Checks the compatibility of the driver version with client version. For all intents and purposes this can be
 /// considered the real 'ping' with the current pings being POC for passing data between UM and KM.
 pub fn ioctl_check_driver_compatibility(
@@ -529,4 +575,78 @@ pub fn ioctl_check_driver_compatibility(
     }
 
     Ok(())
+}
+
+pub struct ImageLoadQueueForInjector {
+    queue: FastMutex<BTreeSet<usize>>,
+}
+
+impl ImageLoadQueueForInjector {
+    pub fn new() -> Self {
+        // todo this should be done via the Grt - then look at the ioctl fn above and complete.
+        let hm: BTreeSet<usize> = BTreeSet::new();
+        let mtx = match FastMutex::new(hm) {
+            Ok(m) => m,
+            Err(e) => {
+                println!("[sanctum] [-] Unable to create FastMutex for ImageLoadQueueForInjector. {:?}", e);
+                panic!();
+            },
+        };
+
+        Self { 
+            queue: mtx
+        }
+    }
+
+    pub fn add_process(&self, pid: usize, process_name: String) {
+        let mut lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
+                panic!();
+            },
+        };
+
+        if lock.insert(pid) == false {
+            println!("[sanctum] [i] ImageLoadQueueForInjector had duplicate key for pid: {pid}, this should not occur.");
+        }
+    }
+
+    // todo will this fn be used? Drain probs preferred 
+    pub fn remove_process(&self, pid: usize) {
+        let mut lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
+                panic!();
+            },
+        };
+
+        let _ = lock.remove(&pid);
+    }
+
+    /// Drains the current state of the `ImageLoadQueueForInjector`, clearing the old structure for new data to be added in a
+    /// async safe manner.
+    /// 
+    /// # Returns
+    /// - `none` if the set was empty.
+    /// - `some` containing the newly created pids.
+    pub fn drain(&self) -> Option<BTreeSet<usize>> {
+        let mut lock = match self.queue.lock() {
+            Ok(l) => l,
+            Err(e) => {
+                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
+                panic!();
+            },
+        };
+
+        if lock.is_empty() {
+            return None;
+        }
+
+        let dup = lock.clone();
+        lock.clear();
+
+        Some(dup)
+    }
 }

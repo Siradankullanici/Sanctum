@@ -231,6 +231,7 @@ extern "C" fn image_load_callback(
     pid: HANDLE,
     image_info: *mut _IMAGE_INFO,
 ) {
+    // I guess these should never be null
     if image_info.is_null() || image_name.is_null() {
         return;
     }

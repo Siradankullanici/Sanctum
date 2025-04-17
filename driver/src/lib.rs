@@ -25,16 +25,13 @@ use core::{
     threads::{set_thread_creation_callback, thread_callback},
 };
 use device_comms::{
-    DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_handler_get_kernel_msg_len,
-    ioctl_handler_ping, ioctl_handler_ping_return_struct,
-    ioctl_handler_send_kernel_msgs_to_userland,
+    ioctl_check_driver_compatibility, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex
 };
 use ffi::IoGetCurrentIrpStackLocation;
 use shared_no_std::{
     constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
     ioctl::{
-        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
-        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
     },
 };
 use utils::{Log, LogLevel};
@@ -361,14 +358,14 @@ unsafe extern "C" fn sanctum_create_close(_device: *mut DEVICE_OBJECT, pirp: PIR
 /// - '_device': Unused
 /// - 'irp': A pointer to the I/O request packet (IRP) that contains information about the request
 unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NTSTATUS {
-    let p_stack_location: *mut _IO_STACK_LOCATION = IoGetCurrentIrpStackLocation(pirp);
+    let p_stack_location: *mut _IO_STACK_LOCATION = unsafe { IoGetCurrentIrpStackLocation(pirp) };
 
     if p_stack_location.is_null() {
         println!("[sanctum] [-] Unable to get stack location for IRP.");
         return STATUS_UNSUCCESSFUL;
     }
 
-    let control_code = (*p_stack_location).Parameters.DeviceIoControl.IoControlCode; // IOCTL code
+    let control_code = unsafe { (*p_stack_location).Parameters.DeviceIoControl.IoControlCode }; // IOCTL code
 
     // process the IOCTL based on its code, note that the functions implementing IOCTL's should
     // contain detailed error messages within the functions, returning a Result<(), NTSTATUS> this will
@@ -385,7 +382,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        }
+        },
         SANC_IOCTL_PING_WITH_STRUCT => {
             if let Err(e) = ioctl_handler_ping_return_struct(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -393,7 +390,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        }
+        },
         SANC_IOCTL_CHECK_COMPATIBILITY => {
             if let Err(e) = ioctl_check_driver_compatibility(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -401,21 +398,27 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        }
+        },
         SANC_IOCTL_DRIVER_GET_MESSAGE_LEN => {
             if let Err(_) = ioctl_handler_get_kernel_msg_len(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        }
+        },
         SANC_IOCTL_DRIVER_GET_MESSAGES => {
             if let Err(_) = ioctl_handler_send_kernel_msgs_to_userland(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-            // STATUS_SUCCESS
+        },
+        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS => {
+            if let Err(_) = ioctl_handler_get_image_loads(pirp) {
+                STATUS_UNSUCCESSFUL
+            } else {
+                STATUS_SUCCESS
+            }
         }
 
         _ => {
