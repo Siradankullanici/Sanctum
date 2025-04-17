@@ -1,20 +1,13 @@
 //! This module handles callback implementations and and other function related to processes.
 
-use alloc::vec::Vec;
-use core::{ffi::c_void, iter::once, ptr::null_mut, sync::atomic::Ordering};
+use alloc::{string::{String, ToString}, vec::Vec};
+use core::{ffi::c_void, iter::once, ptr::{null_mut, slice_from_raw_parts}, sync::atomic::Ordering};
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
 use wdk_sys::{
-    _MODE::KernelMode,
-    _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS,
-    APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION,
-    OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION,
-    OB_PRE_OPERATION_INFORMATION, OB_PREOP_CALLBACK_STATUS, PEPROCESS, PROCESS_ALL_ACCESS,
-    PS_CREATE_NOTIFY_INFO, PsProcessType, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING,
     ntddk::{
-        KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId,
-        PsGetProcessId, RtlInitUnicodeString,
-    },
+        KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, PsRemoveLoadImageNotifyRoutine, PsSetLoadImageNotifyRoutine, RtlInitUnicodeString
+    }, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PIMAGE_INFO, PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _IMAGE_INFO, _MODE::KernelMode, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS, _UNICODE_STRING
 };
 
 use crate::{DRIVER_MESSAGES, REGISTRATION_HANDLE, utils::unicode_to_string};
@@ -222,4 +215,54 @@ unsafe extern "system" {
         ProcessInformation: *mut c_void,
         ProcessInformationLength: u32,
     ) -> NTSTATUS;
+}
+
+pub fn register_image_load_callback() -> NTSTATUS {
+    unsafe { PsSetLoadImageNotifyRoutine(Some(image_load_callback)) }
+}
+
+pub fn unregister_image_load_callback() {
+    let _ = unsafe { PsRemoveLoadImageNotifyRoutine(Some(image_load_callback)) };
+}
+
+/// The callback function for image load events (exe, dll)
+extern "C" fn image_load_callback(
+    image_name: *mut _UNICODE_STRING,
+    pid: HANDLE,
+    image_info: *mut _IMAGE_INFO,
+) {
+    if image_info.is_null() || image_name.is_null() {
+        return;
+    }
+
+    // Check that we aren't dealing with a driver load, we dont care about those for now
+    if pid.is_null() {
+        return;
+    }
+
+    // Check the inbound pointers
+    if image_info.is_null() || image_name.is_null() {
+        println!("[sanctum] [-] Pointers were null in image_load_callback, and this is unexpected.");
+        return;
+    }
+
+    // // SAFETY: Pointers validated so deref
+    let image_name = unsafe { *image_name };
+    let image_info = unsafe { *image_info };
+
+    let name_slice = slice_from_raw_parts(image_name.Buffer, (image_name.Length / 2) as usize);
+    let name = String::from_utf16_lossy(unsafe {&*name_slice});
+
+    // For now only concern ourselves with image loads where its an exe
+    if !name.contains(".exe") {
+        return;
+    }
+
+    println!("name: {:?}, base: {:p}", name, image_info.ImageBase);
+
+    // Step 1: Instruct the engine to inject the DLL
+
+    // Step 2: Loop until done (recv ioctl, going to have to be handled async)
+
+    // Step 3: Return / do other things
 }

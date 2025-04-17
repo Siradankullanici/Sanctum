@@ -26,6 +26,7 @@ wdk-panic = "0.3"
 # wdk-sys = { path="../../windows-drivers-rs/crates/wdk-sys", version = "0.3", features = ["filesystem"]}
 # wdk-panic = { path="../../windows-drivers-rs/crates/wdk-panic", version = "0.3"}
 
+# wdk_unwrap = {path = "../../wdk_unwrap", version = "0.1.0" }
 shared_no_std = { path = "../shared_no_std", default-features = false }
 serde_json = {version = "1.0", default-features = false, features = ["alloc"] }
 serde = { version = "1.0", default-features = false, features = ["derive", "alloc"]}

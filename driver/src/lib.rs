@@ -17,10 +17,10 @@ use ::core::{
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
 };
-use alloc::{boxed::Box, format, vec::Vec};
+use alloc::{boxed::Box, format, string::{String, ToString}, vec::Vec};
 use core::{
     etw_mon::monitor_kernel_etw,
-    processes::{ProcessHandleCallback, process_create_callback},
+    processes::{process_create_callback, register_image_load_callback, unregister_image_load_callback, ProcessHandleCallback},
     registry::{enable_registry_monitoring, unregister_registry_monitor},
     threads::{set_thread_creation_callback, thread_callback},
 };
@@ -41,18 +41,9 @@ use utils::{Log, LogLevel};
 use wdk::{nt_success, println};
 use wdk_mutex::{fast_mutex::FastMutex, grt::Grt, kmutex::KMutex};
 use wdk_sys::{
-    _IO_STACK_LOCATION,
-    _KWAIT_REASON::Executive,
-    _MODE::KernelMode,
-    DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN,
-    FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL,
-    NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS,
-    STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING,
     ntddk::{
-        IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink,
-        IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject,
-        PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString,
-    },
+        IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject, PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString
+    }, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION, _KWAIT_REASON::Executive, _MODE::KernelMode
 };
 
 mod core;
@@ -99,9 +90,10 @@ pub unsafe extern "system" fn driver_entry(
         return STATUS_UNSUCCESSFUL;
     }
 
-    let status = configure_driver(driver, registry_path as *mut _);
+    let status = unsafe { configure_driver(driver, registry_path as *mut _) };
 
-    monitor_kernel_etw();
+    // Commenting out as causing bug checks whilst developing the new DLL loader mechanism? Odd
+    // monitor_kernel_etw();
 
     status
 }
@@ -163,6 +155,7 @@ pub unsafe extern "C" fn configure_driver(
         println!(
             "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
         );
+        driver_exit(driver); // cleanup any resources before returning
         return res;
     }
 
@@ -203,23 +196,34 @@ pub unsafe extern "C" fn configure_driver(
 
     // Registry callbacks
     if let Err(code) = enable_registry_monitoring(driver) {
+        driver_exit(driver); // cleanup any resources before returning
         return code;
     }
 
     // Thread interception
     set_thread_creation_callback();
 
+    // Process image loads
+    let status = register_image_load_callback();
+    if !nt_success(status) {
+        println!("[sanctum] [-] Could not start PsSetLoadImageNotifyRoutine. Status: {status}");
+        driver_exit(driver); // cleanup any resources before returning
+        return status;
+    }
+
     // Intercepting process creation
-    let res = PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8);
+    let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8) };
     if res != STATUS_SUCCESS {
         println!(
             "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
         );
+        driver_exit(driver); // cleanup any resources before returning
         return res;
     }
 
     // Requests for a handle
     if let Err(e) = ProcessHandleCallback::register_callback() {
+        driver_exit(driver); // cleanup any resources before returning
         return e;
     }
 
@@ -259,6 +263,9 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
         );
     }
 
+    // Drop the callback on image load notifications
+    unregister_image_load_callback();
+
     // drop the callback for new thread interception
     let res = unsafe { PsRemoveCreateThreadNotifyRoutine(Some(thread_callback)) };
     if res != STATUS_SUCCESS {
@@ -295,34 +302,33 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     // Thread cleanup
     //
 
-    {
-        let terminate_etw_thread = Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR")
-            .expect("[sanctum] [-] Could not get TERMINATION_FLAG_ETW_MONITOR in driver exit.");
+    if let Ok(terminate_etw_thread) = Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR") {
         let mut lock = terminate_etw_thread.lock().unwrap();
         *lock = true;
     }
     {
-        let thread_handle_grt: &FastMutex<*mut c_void> = Grt::get_fast_mutex("ETW_THREAD_HANDLE")
-            .expect("[sanctum] [-] Could not get ETW_THREAD_HANDLE in driver exit");
-        let thread_handle = thread_handle_grt.lock().unwrap();
+        let thread_handle_grt: Result<&FastMutex<*mut c_void>, wdk_mutex::errors::GrtError> = Grt::get_fast_mutex("ETW_THREAD_HANDLE");
+        if let Ok(thread_handle_grt) = thread_handle_grt {
+            let thread_handle = thread_handle_grt.lock().unwrap();
 
-        if !thread_handle.is_null() {
-            let status = unsafe {
-                KeWaitForSingleObject(
-                    *thread_handle,
-                    Executive,
-                    KernelMode as _,
-                    FALSE as _,
-                    null_mut(),
-                )
-            };
+            if !thread_handle.is_null() {
+                let status = unsafe {
+                    KeWaitForSingleObject(
+                        *thread_handle,
+                        Executive,
+                        KernelMode as _,
+                        FALSE as _,
+                        null_mut(),
+                    )
+                };
 
-            if status != STATUS_SUCCESS {
-                println!(
-                    "[sanctum] [-] Did not successfully call KeWaitForSingleObject when trying to exit system thread for ETW Monitoring."
-                );
+                if status != STATUS_SUCCESS {
+                    println!(
+                        "[sanctum] [-] Did not successfully call KeWaitForSingleObject when trying to exit system thread for ETW Monitoring."
+                    );
+                }
+                let _ = unsafe { ObfDereferenceObject(*thread_handle) };
             }
-            let _ = unsafe { ObfDereferenceObject(*thread_handle) };
         }
     }
 
@@ -424,7 +430,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
     // indicates that the caller has completed all processing for a given I/O request and
     // is returning the given IRP to the I/O manager
     // https://learn.microsoft.com/en-us/windows-hardware/drivers/ddi/wdm/nf-wdm-iocompleterequest
-    IofCompleteRequest(pirp, IO_NO_INCREMENT as i8);
+    unsafe { IofCompleteRequest(pirp, IO_NO_INCREMENT as i8) };
 
     result
 }
