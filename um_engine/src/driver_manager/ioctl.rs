@@ -5,12 +5,9 @@ use crate::utils::log::LogLevel;
 use super::driver_manager::SanctumDriverManager;
 use core::str;
 use shared_no_std::{
-    constants::VERSION_CLIENT,
-    ioctl::{
-        DriverMessages, SancIoctlPing, SANC_IOCTL_CHECK_COMPATIBILITY,
-        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING,
-        SANC_IOCTL_PING_WITH_STRUCT,
-    },
+    constants::VERSION_CLIENT, driver_ipc::ImageLoadQueues, ioctl::{
+        DriverMessages, SancIoctlPing, SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
+    }
 };
 use std::{ffi::c_void, slice::from_raw_parts};
 use windows::Win32::System::IO::DeviceIoControl;
@@ -239,6 +236,90 @@ impl SanctumDriverManager {
                     LogLevel::Error,
                     &format!(
                         "Could not serialise response from driver messages. {e} Got: {:?}",
+                        response
+                    ),
+                );
+
+                return None;
+            }
+        };
+
+        Some(response_serialised)
+    }
+
+    pub fn ioctl_get_image_loads_for_injecting_sanc_dll(&mut self) -> Option<ImageLoadQueues> {
+        // todo improve how the error handling happens..
+        if self.handle_via_path.handle.is_none() {
+            // try 1 more time
+            self.init_handle_via_registry();
+            if self.handle_via_path.handle.is_none() {
+                return None;
+            }
+        }
+
+        // Make a request into the driver to obtain the buffer size of the response. Internally, this will
+        // store the current state into a cache which will then be queried immediately after we have the
+        // buffer size.
+
+        let mut size_of_kernel_msg: usize = 0;
+        let mut bytes_returned: u32 = 0;
+
+        let result = unsafe {
+            DeviceIoControl(
+                self.handle_via_path.handle.unwrap(),
+                SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN,
+                None,
+                0u32,
+                Some(&mut size_of_kernel_msg as *mut _ as *mut _),
+                size_of::<usize>() as u32,
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+        if result.is_err() || size_of_kernel_msg == 0 {
+            return None;
+        }
+
+        // Now we have the buffer size, and it is greater than 0, request the data.
+
+        let mut response: Vec<u8> = vec![0; size_of_kernel_msg];
+        let mut bytes_returned: u32 = 0;
+
+        // attempt the call
+        let result = unsafe {
+            DeviceIoControl(
+                self.handle_via_path.handle.unwrap(),
+                SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
+                None,
+                0u32,
+                Some(response.as_mut_ptr() as *mut c_void),
+                size_of_kernel_msg as u32,
+                Some(&mut bytes_returned),
+                None,
+            )
+        };
+
+        if let Err(e) = result {
+            self.log.log(
+                LogLevel::Error,
+                &format!("Error from attempting IOCTL call. {e}"),
+            );
+            return None;
+        }
+
+        if bytes_returned == 0 {
+            self.log
+                .log(LogLevel::Error, "No bytes returned from DeviceIOControl");
+            return None;
+        }
+
+        let response_serialised = match serde_json::from_slice::<ImageLoadQueues>(&response) {
+            Ok(r) => r,
+            Err(e) => {
+                self.log.log(
+                    LogLevel::Error,
+                    &format!(
+                        "Could not serialise response from image load IOCTL. {e} Got: {:?}",
                         response
                     ),
                 );

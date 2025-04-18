@@ -100,6 +100,15 @@ impl Core {
                 mtx.ioctl_get_driver_messages()
             };
 
+            let result = {
+                let mut mtx = driver_manager.lock().await;
+                mtx.ioctl_get_image_loads_for_injecting_sanc_dll()
+            };
+
+            if let Some(r) = result {
+                println!("[sanctum] [i] Result of getting image loads: {:?}", r);
+            }
+
             //
             // If we have new message(s) / emissions from the driver or injected DLL, process them as appropriate
             //

@@ -492,6 +492,48 @@ pub fn ioctl_handler_ping_return_struct(
     Ok(())
 }
 
+pub fn ioctl_get_image_load_len(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
+        if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
+            println!("[sanctum] [-] SystemBuffer is a null pointer in ioctl_get_image_load_len.");
+            return Err(DriverError::NullPtr);
+        }
+    }
+
+    // We want to drain the live copy of the ImageLoadQueueForInjector into the cache (handled by the `drain_queue` fn)
+    // and check the size of the returned data, which will be the memory size of the cache. We can then send this back to 
+    // userland and make a subsequent IOCTL which will drain the cached copy, sending it to userland.
+    let data = ImageLoadQueueForInjector::drain_queue(ImageLoadQueueSelector::Live);
+    if data.is_none() {
+        return Err(DriverError::NoDataToSend);
+    }
+
+    // safe to unwrap now with the above check
+    let data = data.unwrap();
+    let serialised = match serde_json::to_string(&data) {
+        Ok(ser) => ser,
+        Err(e) => {
+            println!("[sanctum] [-] Unable to serialise the BTreeSet. {e}");
+            return Err(DriverError::CouldNotSerialize);
+        },
+    };
+
+    let data_len = serialised.as_bytes().len();
+
+    unsafe { (*pirp).IoStatus.Information = mem::size_of::<usize>() as u64 };
+
+    // copy the memory into the buffer
+    unsafe {
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            &data_len as *const _ as *const _,
+            mem::size_of::<usize>() as u64,
+        )
+    };
+
+    Ok(())
+}
+
 pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
     unsafe {
         if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
@@ -503,13 +545,13 @@ pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
     }
 
     // Load up the `ImageLoadQueueForInjector`. We will check to see whether it contains data; if not - we can return nothing.
-    let data = ImageLoadQueueForInjector::drain_queue_for_usermode();
+    let data = ImageLoadQueueForInjector::drain_queue(ImageLoadQueueSelector::Cache);
 
     if data.is_none() {
         return Err(DriverError::NoDataToSend);
     }
 
-    let encoded_data = match serde_json::to_vec(&data.unwrap()) {
+    let encoded_data = match serde_json::to_string(&data.clone().unwrap()) {
         Ok(v) => v,
         Err(e) => {
             println!(
@@ -519,15 +561,17 @@ pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
         }
     };
 
-    let size_of_struct = encoded_data.len() as u64;
-    unsafe { (*pirp).IoStatus.Information = size_of_struct };
+    let bytes = encoded_data.as_bytes();
+    let data_len = bytes.len();
+
+    unsafe { (*pirp).IoStatus.Information = data_len as _ };
 
     // copy the memory into the buffer
     unsafe {
         RtlCopyMemoryNonTemporal(
             (*pirp).AssociatedIrp.SystemBuffer,
-            encoded_data.as_ptr() as *const _,
-            size_of_struct,
+            bytes.as_ptr() as *const _ as *const _,
+            data_len as _,
         )
     };
 
@@ -579,6 +623,12 @@ pub fn ioctl_check_driver_compatibility(
     Ok(())
 }
 
+#[derive(Debug)]
+enum ImageLoadQueueSelector {
+    Cache,
+    Live,
+}
+
 /// An interface to access processes pending creation after the image load callback has run.
 ///
 /// Whilst this has the name 'queue', it is not strictly speaking a queue, but is an interface for a BTreeSet wrapped in a
@@ -588,6 +638,8 @@ pub struct ImageLoadQueueForInjector;
 impl ImageLoadQueueForInjector {
     /// Initialises the ImageLoadQueueForInjector, which uses the `wdk_mutex` Grt for global access to a mutex containing
     /// the image load 'queue'.
+    /// 
+    /// Initialises ImageLoadCache, which will be drained by the final IOCTL once the size is known.
     ///
     /// Initialises the `ImageLoadQueuePendingInjection` Grt, which is used by the image load callback routine to wait
     /// for notification that the engine has injected our DLL into the process.
@@ -605,6 +657,20 @@ impl ImageLoadQueueForInjector {
             Err(e) => {
                 println!(
                     "[sanctum] [-] Error registering fast mutex for ImageLoadQueueForInjector. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadCache",
+            ImageLoadQueues::new(),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadCache. {:?}",
                     e
                 );
                 panic!();
@@ -766,15 +832,18 @@ impl ImageLoadQueueForInjector {
     /// # Returns
     /// - `none` if the set was empty.
     /// - `some` containing the newly created pids.
-    pub fn drain_queue_for_usermode() -> Option<ImageLoadQueues> {
-        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
-            "ImageLoadQueueForInjector",
-        ) {
+    pub fn drain_queue(queue_type: ImageLoadQueueSelector) -> Option<ImageLoadQueues> {
+        let key = match queue_type {
+            ImageLoadQueueSelector::Cache => "ImageLoadCache",
+            ImageLoadQueueSelector::Live => "ImageLoadQueueForInjector",
+        };
+
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(key) {
             Ok(l) => match l.lock() {
                 Ok(l) => l,
                 Err(e) => {
                     println!(
-                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in add_process. {:?}",
+                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in drain_queue. {:?}",
                         e
                     );
                     panic!();
@@ -782,7 +851,7 @@ impl ImageLoadQueueForInjector {
             },
             Err(e) => {
                 println!(
-                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in add_process. {:?}",
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in drain_queue. {:?}",
                     e
                 );
                 panic!();
@@ -793,8 +862,40 @@ impl ImageLoadQueueForInjector {
             return None;
         }
 
-        let dup = lock.clone();
-        lock.clear();
+        println!("[sanctum] [i] Live queue was not empty. {:?}", *lock);
+
+        let mut dup = mem::take(&mut *lock);
+
+        println!("Lock after clear: {:?}, dup: {:?}", *lock, dup);
+
+        // If we drained the live queue, we need to add this to the cache
+        match queue_type {
+            ImageLoadQueueSelector::Live => {
+                let mut cache_lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex("ImageLoadCache") {
+                    Ok(l) => match l.lock() {
+                        Ok(l) => l,
+                        Err(e) => {
+                            println!(
+                                "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in drain_queue. {:?}",
+                                e
+                            );
+                            panic!();
+                        }
+                    },
+                    Err(e) => {
+                        println!(
+                            "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in drain_queue. {:?}",
+                            e
+                        );
+                        panic!();
+                    }
+                };
+
+                cache_lock.append(&mut dup);
+                return Some((*cache_lock).clone());
+            },
+            _ => (),
+        }
 
         Some(dup)
     }

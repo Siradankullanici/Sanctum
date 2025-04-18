@@ -290,7 +290,8 @@ extern "C" fn image_load_callback(
 
     // For now only concern ourselves with image loads where its an exe, except in the event its the sanctum EDR DLL -
     // see below comments for why.
-    if name.ends_with(".dll") && !name.contains("sanctum.dll") {
+    if name.contains(".dll") && !name.contains("sanctum.dll") {
+        println!("DLL found. Returning {}", name);
         return;
     }
 
