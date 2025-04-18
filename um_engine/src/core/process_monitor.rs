@@ -362,8 +362,9 @@ impl ProcessMonitor {
                             process.update_process_risk_score(item.weight);
                             process.ghost_hunting_timers.remove(index);
                             println!(
-                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}",
-                                item.event_type
+                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
+                                item.event_type,
+                                process.pid
                             );
                             break;
                         }
@@ -372,8 +373,9 @@ impl ProcessMonitor {
                             process.update_process_risk_score(item.weight);
                             process.ghost_hunting_timers.remove(index);
                             println!(
-                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}",
-                                item.event_type
+                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
+                                item.event_type,
+                                process.pid
                             );
                             break;
                         }

@@ -104,15 +104,6 @@ impl Core {
                 mtx.ioctl_get_image_loads_for_injecting_sanc_dll()
             };
 
-            if let Some(image_loads) = image_loads {
-                for pid in image_loads {
-                    println!("[i] Target process detected, injecting EDR DLL...");
-                    if let Err(e) = inject_edr_dll(pid as _) {
-                        logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
-                    };
-                }
-            }
-
             //
             // If we have new message(s) / emissions from the driver or injected DLL, process them as appropriate
             //
@@ -190,6 +181,15 @@ impl Core {
 
                     ^ to the abv hashmap
                 */
+            }
+
+            if let Some(image_loads) = image_loads {
+                for pid in image_loads {
+                    println!("[i] Target process detected, injecting EDR DLL...");
+                    if let Err(e) = inject_edr_dll(pid as _) {
+                        logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
+                    };
+                }
             }
         }
     }
