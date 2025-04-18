@@ -7,8 +7,7 @@ use tokio::{
 };
 
 use crate::{
-    driver_manager::SanctumDriverManager,
-    utils::log::{Log, LogLevel},
+    core::process_monitor::inject_edr_dll, driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}
 };
 
 use super::{
@@ -100,6 +99,11 @@ impl Core {
                 mtx.ioctl_get_driver_messages()
             };
 
+            let image_loads = {
+                let mut mtx = driver_manager.lock().await;
+                mtx.ioctl_get_image_loads_for_injecting_sanc_dll()
+            };
+
             //
             // If we have new message(s) / emissions from the driver or injected DLL, process them as appropriate
             //
@@ -177,6 +181,15 @@ impl Core {
 
                     ^ to the abv hashmap
                 */
+            }
+
+            if let Some(image_loads) = image_loads {
+                for pid in image_loads {
+                    println!("[i] Target process detected, injecting EDR DLL...");
+                    if let Err(e) = inject_edr_dll(pid as _) {
+                        logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
+                    };
+                }
             }
         }
     }

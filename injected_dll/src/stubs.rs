@@ -85,6 +85,8 @@ unsafe extern "system" fn virtual_alloc_ex(
             unsafe { *region_size }
         };
 
+        println!("ntallocvm, addr: {:p}, pid responsible: {}, sz: {}", base_address, remote_pid, region_size_checked);
+
         let data = DLLMessage::SyscallWrapper(Syscall {
             nt_function: NtFunction::NtAllocateVirtualMemory(Some(NtAllocateVirtualMemory {
                 base_address: base_address as usize,
@@ -138,6 +140,8 @@ unsafe extern "system" fn nt_write_virtual_memory(
     let remote_pid = unsafe { GetProcessId(handle) };
     let base_addr_as_usize = base_address as usize;
     let buf_len_as_usize = buf_len as usize;
+
+    println!("[i] Base address as ptr: {:p} to pid: {}", base_address, remote_pid);
 
     // todo inspect buffer for signature of malware
     // todo inspect buffer  for magic bytes + dos header, etc

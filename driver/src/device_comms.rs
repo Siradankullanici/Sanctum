@@ -4,14 +4,20 @@ use crate::{
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
     utils::{DriverError, Log, check_driver_version},
 };
-use alloc::{format, string::String};
+use alloc::{
+    format,
+    string::String,
+};
 use shared_no_std::{
     constants::SanctumVersion,
-    driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated},
+    driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
     ioctl::{DriverMessages, SancIoctlPing},
 };
 use wdk::println;
-use wdk_mutex::fast_mutex::FastMutex;
+use wdk_mutex::{
+    fast_mutex::{FastMutex, FastMutexGuard},
+    grt::Grt,
+};
 use wdk_sys::{
     _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
     STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
@@ -486,6 +492,92 @@ pub fn ioctl_handler_ping_return_struct(
     Ok(())
 }
 
+pub fn ioctl_get_image_load_len(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
+        if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
+            println!("[sanctum] [-] SystemBuffer is a null pointer in ioctl_get_image_load_len.");
+            return Err(DriverError::NullPtr);
+        }
+    }
+
+    // We want to drain the live copy of the ImageLoadQueueForInjector into the cache (handled by the `drain_queue` fn)
+    // and check the size of the returned data, which will be the memory size of the cache. We can then send this back to 
+    // userland and make a subsequent IOCTL which will drain the cached copy, sending it to userland.
+    let data = ImageLoadQueueForInjector::drain_queue(ImageLoadQueueSelector::Live);
+    if data.is_none() {
+        return Err(DriverError::NoDataToSend);
+    }
+
+    // safe to unwrap now with the above check
+    let data = data.unwrap();
+    let serialised = match serde_json::to_string(&data) {
+        Ok(ser) => ser,
+        Err(e) => {
+            println!("[sanctum] [-] Unable to serialise the BTreeSet. {e}");
+            return Err(DriverError::CouldNotSerialize);
+        },
+    };
+
+    let data_len = serialised.as_bytes().len();
+
+    unsafe { (*pirp).IoStatus.Information = mem::size_of::<usize>() as u64 };
+
+    // copy the memory into the buffer
+    unsafe {
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            &data_len as *const _ as *const _,
+            mem::size_of::<usize>() as u64,
+        )
+    };
+
+    Ok(())
+}
+
+pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
+    unsafe {
+        if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
+            println!(
+                "[sanctum] [-] SystemBuffer is a null pointer in ioctl_handler_get_image_loads."
+            );
+            return Err(DriverError::NullPtr);
+        }
+    }
+
+    // Load up the `ImageLoadQueueForInjector`. We will check to see whether it contains data; if not - we can return nothing.
+    let data = ImageLoadQueueForInjector::drain_queue(ImageLoadQueueSelector::Cache);
+
+    if data.is_none() {
+        return Err(DriverError::NoDataToSend);
+    }
+
+    let encoded_data = match serde_json::to_string(&data.clone().unwrap()) {
+        Ok(v) => v,
+        Err(e) => {
+            println!(
+                "[sanctum] [-] Error serializing data to string in ioctl_handler_get_image_loads. {e}"
+            );
+            return Err(DriverError::CouldNotSerialize);
+        }
+    };
+
+    let bytes = encoded_data.as_bytes();
+    let data_len = bytes.len();
+
+    unsafe { (*pirp).IoStatus.Information = data_len as _ };
+
+    // copy the memory into the buffer
+    unsafe {
+        RtlCopyMemoryNonTemporal(
+            (*pirp).AssociatedIrp.SystemBuffer,
+            bytes.as_ptr() as *const _ as *const _,
+            data_len as _,
+        )
+    };
+
+    Ok(())
+}
+
 /// Checks the compatibility of the driver version with client version. For all intents and purposes this can be
 /// considered the real 'ping' with the current pings being POC for passing data between UM and KM.
 pub fn ioctl_check_driver_compatibility(
@@ -529,4 +621,282 @@ pub fn ioctl_check_driver_compatibility(
     }
 
     Ok(())
+}
+
+#[derive(Debug)]
+enum ImageLoadQueueSelector {
+    Cache,
+    Live,
+}
+
+/// An interface to access processes pending creation after the image load callback has run.
+///
+/// Whilst this has the name 'queue', it is not strictly speaking a queue, but is an interface for a BTreeSet wrapped in a
+/// FastMutex via `wdk_mutex` Grt.
+pub struct ImageLoadQueueForInjector;
+
+impl ImageLoadQueueForInjector {
+    /// Initialises the ImageLoadQueueForInjector, which uses the `wdk_mutex` Grt for global access to a mutex containing
+    /// the image load 'queue'.
+    /// 
+    /// Initialises ImageLoadCache, which will be drained by the final IOCTL once the size is known.
+    ///
+    /// Initialises the `ImageLoadQueuePendingInjection` Grt, which is used by the image load callback routine to wait
+    /// for notification that the engine has injected our DLL into the process.
+    ///
+    /// This function should only be called once in the drivers life.
+    ///
+    /// # Panics
+    /// This function will cause a driver panic if it is unable to register the mutex with the `Grt`.
+    pub fn init() {
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadQueueForInjector",
+            ImageLoadQueues::new(),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadQueueForInjector. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadCache",
+            ImageLoadQueues::new(),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadCache. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadQueuePendingInjection",
+            ImageLoadQueues::new(),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadQueuePendingInjection. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+    }
+
+    /// Queues a process by PID to the Grt `ImageLoadQueueForInjector` waiting for the usermode engine to take it away
+    /// to instruct the Sanctum DLL to be injected.
+    pub fn queue_process_for_usermode(pid: usize) {
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
+            "ImageLoadQueueForInjector",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in add_process. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in add_process. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        if lock.insert(pid) == false {
+            println!(
+                "[sanctum] [i] ImageLoadQueueForInjector had duplicate key for pid: {pid}, this should not occur."
+            );
+            panic!(); // maybe bsod here? this state should never occur
+        }
+
+        // Add the pid to the queue so that we can match the resulting DLL image load
+        Self::add_dll_injected_for_pid(pid);
+    }
+
+    /// Adds a process to the `Grt` for `ImageLoadQueuePendingInjection`.
+    pub fn add_dll_injected_for_pid(pid: usize) {
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in add_process. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in add_process. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        if lock.insert(pid) == false {
+            println!(
+                "[sanctum] [i] ImageLoadQueuePendingInjection had duplicate key for pid: {pid}, this should not occur."
+            );
+            panic!(); // maybe bsod here? this state should never occur
+        }
+    }
+
+    /// Removes a pid from the set which contains pids waiting for sanctum to be injected into them.
+    ///
+    /// # Returns
+    /// - `Ok` if the PID was present
+    /// - `Err` if the PID was not present - this would be indicative of threat actor manipulation
+    pub fn remove_pid_from_injection_waitlist(pid: usize) -> Result<(), ()> {
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        if lock.remove(&pid) == false {
+            return Err(());
+        }
+
+        Ok(())
+    }
+
+    /// Determines whether a PID is present in the waitlist for the ImageLoadQueuePendingInjection `Grt`.
+    ///
+    /// # Returns
+    /// `true` if the PID is present
+    /// `false` if the PID is not present
+    pub fn pid_in_waitlist(pid: usize) -> bool {
+        let lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        lock.contains(&pid)
+    }
+
+    /// Drains the current state of the `ImageLoadQueueForInjector`, clearing the old structure for new data to be added in a
+    /// async safe manner.
+    ///
+    /// # Returns
+    /// - `none` if the set was empty.
+    /// - `some` containing the newly created pids.
+    pub fn drain_queue(queue_type: ImageLoadQueueSelector) -> Option<ImageLoadQueues> {
+        let key = match queue_type {
+            ImageLoadQueueSelector::Cache => "ImageLoadCache",
+            ImageLoadQueueSelector::Live => "ImageLoadQueueForInjector",
+        };
+
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(key) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in drain_queue. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in drain_queue. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        if lock.is_empty() {
+            return None;
+        }
+
+        println!("[sanctum] [i] Live queue was not empty. {:?}", *lock);
+
+        let mut dup = mem::take(&mut *lock);
+
+        println!("Lock after clear: {:?}, dup: {:?}", *lock, dup);
+
+        // If we drained the live queue, we need to add this to the cache
+        match queue_type {
+            ImageLoadQueueSelector::Live => {
+                let mut cache_lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex("ImageLoadCache") {
+                    Ok(l) => match l.lock() {
+                        Ok(l) => l,
+                        Err(e) => {
+                            println!(
+                                "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in drain_queue. {:?}",
+                                e
+                            );
+                            panic!();
+                        }
+                    },
+                    Err(e) => {
+                        println!(
+                            "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in drain_queue. {:?}",
+                            e
+                        );
+                        panic!();
+                    }
+                };
+
+                cache_lock.append(&mut dup);
+                return Some((*cache_lock).clone());
+            },
+            _ => (),
+        }
+
+        Some(dup)
+    }
 }

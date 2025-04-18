@@ -1,7 +1,7 @@
 //! Definitions for IPC structures shared between the user mode modules and the driver
 //! for serialisation through IPC.
 extern crate alloc;
-use alloc::string::String;
+use alloc::{string::String, collections::BTreeSet};
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
@@ -25,3 +25,4 @@ pub struct HandleObtained {
     pub rights_given: u32,
 }
 
+pub type ImageLoadQueues = BTreeSet::<usize>;

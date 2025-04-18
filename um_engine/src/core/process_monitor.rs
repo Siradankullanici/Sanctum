@@ -118,12 +118,12 @@ impl ProcessMonitor {
         // Inject the EDR's DLL.
         // TODO for now to prevent system instability this will only be done for pre defined processes. This will need to be
         // reflected at some point for all processes.
-        if proc.image_name.contains(TARGET_EXE) || proc.image_name.contains("powershell") {
-            println!("[i] Target process detected, injecting EDR DLL...");
-            if let Err(e) = inject_edr_dll(proc.pid) {
-                logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
-            };
-        }
+        // if proc.image_name.contains(TARGET_EXE) || proc.image_name.contains("powershell") {
+        //     println!("[i] Target process detected, injecting EDR DLL...");
+        //     if let Err(e) = inject_edr_dll(proc.pid) {
+        //         logger.log(LogLevel::Error, &format!("Error injecting DLL: {:?}", e));
+        //     };
+        // }
 
         // The process can now be tracked, so register it with the ProcessMonitor
         self.register_process(proc).await?;
@@ -362,8 +362,9 @@ impl ProcessMonitor {
                             process.update_process_risk_score(item.weight);
                             process.ghost_hunting_timers.remove(index);
                             println!(
-                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}",
-                                item.event_type
+                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
+                                item.event_type,
+                                process.pid
                             );
                             break;
                         }
@@ -372,8 +373,9 @@ impl ProcessMonitor {
                             process.update_process_risk_score(item.weight);
                             process.ghost_hunting_timers.remove(index);
                             println!(
-                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}",
-                                item.event_type
+                                "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
+                                item.event_type,
+                                process.pid
                             );
                             break;
                         }
@@ -694,7 +696,7 @@ pub async fn snapshot_all_processes() -> ProcessMonitor {
 
 /// Inject the EDR's DLL into a given process by PID. This should be done for processes running on start, and for
 /// processes which are newly created.
-fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
+pub fn inject_edr_dll(pid: u64) -> Result<(), ProcessErrors> {
     // Open the process
     let h_process =
         unsafe { OpenProcess(PROCESS_VM_OPERATION | PROCESS_VM_WRITE, false, pid as u32) };

@@ -4,6 +4,7 @@
 
     "cSpell.words": [
         "Addreg",
+        "alertable",
         "AMSI",
         "APIC",
         "appdata",
@@ -32,6 +33,7 @@
         "iocs",
         "IOCTLS",
         "Irql",
+        "KEVENT",
         "KIRQL",
         "KMUTEX",
         "KSPIN",
@@ -49,6 +51,7 @@
         "NONALERT",
         "nonoverlapping",
         "nostack",
+        "NTAPI",
         "ntddk",
         "NTDLL",
         "ntoskrnl",
@@ -100,6 +103,7 @@
         "Unregisters",
         "usermode",
         "vaddr",
+        "waitlist",
         "wevtutil",
         "Wnode",
         "WORKITEM",
