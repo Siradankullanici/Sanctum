@@ -17,30 +17,51 @@ use ::core::{
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
 };
-use alloc::{boxed::Box, format, string::{String, ToString}, vec::Vec};
+use alloc::{
+    boxed::Box,
+    format,
+    string::{String, ToString},
+    vec::Vec,
+};
 use core::{
     etw_mon::monitor_kernel_etw,
-    processes::{process_create_callback, register_image_load_callback, unregister_image_load_callback, ProcessHandleCallback},
+    processes::{
+        ProcessHandleCallback, process_create_callback, register_image_load_callback,
+        unregister_image_load_callback,
+    },
     registry::{enable_registry_monitoring, unregister_registry_monitor},
     threads::{set_thread_creation_callback, thread_callback},
 };
 use device_comms::{
-    ioctl_check_driver_compatibility, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex
+    DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_handler_get_image_loads,
+    ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct,
+    ioctl_handler_send_kernel_msgs_to_userland,
 };
 use ffi::IoGetCurrentIrpStackLocation;
 use shared_no_std::{
     constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
     ioctl::{
-        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
+        SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING,
+        SANC_IOCTL_PING_WITH_STRUCT,
     },
 };
 use utils::{Log, LogLevel};
 use wdk::{nt_success, println};
 use wdk_mutex::{fast_mutex::FastMutex, grt::Grt, kmutex::KMutex};
 use wdk_sys::{
+    _IO_STACK_LOCATION,
+    _KWAIT_REASON::Executive,
+    _MODE::KernelMode,
+    DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN,
+    FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL,
+    NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS,
+    STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING,
     ntddk::{
-        IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink, IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject, PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString
-    }, DEVICE_OBJECT, DO_BUFFERED_IO, DRIVER_OBJECT, FALSE, FILE_DEVICE_SECURE_OPEN, FILE_DEVICE_UNKNOWN, IO_NO_INCREMENT, IRP_MJ_CLOSE, IRP_MJ_CREATE, IRP_MJ_DEVICE_CONTROL, NTSTATUS, PCUNICODE_STRING, PDEVICE_OBJECT, PIRP, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _IO_STACK_LOCATION, _KWAIT_REASON::Executive, _MODE::KernelMode
+        IoCreateDevice, IoCreateSymbolicLink, IoDeleteDevice, IoDeleteSymbolicLink,
+        IofCompleteRequest, KeWaitForSingleObject, ObUnRegisterCallbacks, ObfDereferenceObject,
+        PsRemoveCreateThreadNotifyRoutine, PsSetCreateProcessNotifyRoutineEx, RtlInitUnicodeString,
+    },
 };
 
 mod core;
@@ -209,7 +230,8 @@ pub unsafe extern "C" fn configure_driver(
     }
 
     // Intercepting process creation
-    let res = unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8) };
+    let res =
+        unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8) };
     if res != STATUS_SUCCESS {
         println!(
             "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
@@ -304,7 +326,8 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
         *lock = true;
     }
     {
-        let thread_handle_grt: Result<&FastMutex<*mut c_void>, wdk_mutex::errors::GrtError> = Grt::get_fast_mutex("ETW_THREAD_HANDLE");
+        let thread_handle_grt: Result<&FastMutex<*mut c_void>, wdk_mutex::errors::GrtError> =
+            Grt::get_fast_mutex("ETW_THREAD_HANDLE");
         if let Ok(thread_handle_grt) = thread_handle_grt {
             let thread_handle = thread_handle_grt.lock().unwrap();
 
@@ -382,7 +405,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_PING_WITH_STRUCT => {
             if let Err(e) = ioctl_handler_ping_return_struct(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -390,7 +413,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_CHECK_COMPATIBILITY => {
             if let Err(e) = ioctl_check_driver_compatibility(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -398,21 +421,21 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_MESSAGE_LEN => {
             if let Err(_) = ioctl_handler_get_kernel_msg_len(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_MESSAGES => {
             if let Err(_) = ioctl_handler_send_kernel_msgs_to_userland(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_IMAGE_LOADS => {
             if let Err(_) = ioctl_handler_get_image_loads(pirp) {
                 STATUS_UNSUCCESSFUL

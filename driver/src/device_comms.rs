@@ -4,14 +4,21 @@ use crate::{
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
     utils::{DriverError, Log, check_driver_version},
 };
-use alloc::{collections::{btree_map::BTreeMap, btree_set::BTreeSet}, format, string::String};
+use alloc::{
+    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
+    format,
+    string::String,
+};
 use shared_no_std::{
     constants::SanctumVersion,
     driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated},
     ioctl::{DriverMessages, SancIoctlPing},
 };
 use wdk::println;
-use wdk_mutex::fast_mutex::FastMutex;
+use wdk_mutex::{
+    fast_mutex::{FastMutex, FastMutexGuard},
+    grt::Grt,
+};
 use wdk_sys::{
     _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
     STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
@@ -489,19 +496,15 @@ pub fn ioctl_handler_ping_return_struct(
 pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
     unsafe {
         if (*pirp).AssociatedIrp.SystemBuffer.is_null() {
-            println!("[sanctum] [-] SystemBuffer is a null pointer in ioctl_handler_get_image_loads.");
+            println!(
+                "[sanctum] [-] SystemBuffer is a null pointer in ioctl_handler_get_image_loads."
+            );
             return Err(DriverError::NullPtr);
         }
     }
 
     // Load up the `ImageLoadQueueForInjector`. We will check to see whether it contains data; if not - we can return nothing.
-    let data = if !DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst).is_null() {
-        let obj = unsafe { &mut *DRIVER_MESSAGES_CACHE.load(Ordering::SeqCst) };
-        obj.extract_all()
-    } else {
-        println!("[sanctum] [-] Invalid pointer");
-        return Err(DriverError::DriverMessagePtrNull);
-    };
+    let data = ImageLoadQueueForInjector::drain_queue_for_usermode();
 
     if data.is_none() {
         return Err(DriverError::NoDataToSend);
@@ -509,9 +512,9 @@ pub fn ioctl_handler_get_image_loads(pirp: PIRP) -> Result<(), DriverError> {
 
     let encoded_data = match serde_json::to_vec(&data.unwrap()) {
         Ok(v) => v,
-        Err(_) => {
+        Err(e) => {
             println!(
-                "[sanctum] [-] Error serializing data to string in ioctl_handler_send_kernel_msgs_to_userland"
+                "[sanctum] [-] Error serializing data to string in ioctl_handler_get_image_loads. {e}"
             );
             return Err(DriverError::CouldNotSerialize);
         }
@@ -577,67 +580,214 @@ pub fn ioctl_check_driver_compatibility(
     Ok(())
 }
 
-pub struct ImageLoadQueueForInjector {
-    queue: FastMutex<BTreeSet<usize>>,
-}
+/// An interface to access processes pending creation after the image load callback has run.
+///
+/// Whilst this has the name 'queue', it is not strictly speaking a queue, but is an interface for a BTreeSet wrapped in a
+/// FastMutex via `wdk_mutex` Grt.
+pub struct ImageLoadQueueForInjector;
 
 impl ImageLoadQueueForInjector {
-    pub fn new() -> Self {
-        // todo this should be done via the Grt - then look at the ioctl fn above and complete.
-        let hm: BTreeSet<usize> = BTreeSet::new();
-        let mtx = match FastMutex::new(hm) {
-            Ok(m) => m,
+    /// Initialises the ImageLoadQueueForInjector, which uses the `wdk_mutex` Grt for global access to a mutex containing
+    /// the image load 'queue'.
+    ///
+    /// Initialises the `ImageLoadQueuePendingInjection` Grt, which is used by the image load callback routine to wait
+    /// for notification that the engine has injected our DLL into the process.
+    ///
+    /// This function should only be called once in the drivers life.
+    ///
+    /// # Panics
+    /// This function will cause a driver panic if it is unable to register the mutex with the `Grt`.
+    pub fn init() {
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadQueueForInjector",
+            BTreeSet::<usize>::new(),
+        ) {
+            Ok(_) => (),
             Err(e) => {
-                println!("[sanctum] [-] Unable to create FastMutex for ImageLoadQueueForInjector. {:?}", e);
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadQueueForInjector. {:?}",
+                    e
+                );
                 panic!();
-            },
+            }
         };
 
-        Self { 
-            queue: mtx
-        }
+        match Grt::register_fast_mutex_checked(
+            "ImageLoadQueuePendingInjection",
+            BTreeSet::<usize>::new(),
+        ) {
+            Ok(_) => (),
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error registering fast mutex for ImageLoadQueuePendingInjection. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
     }
 
-    pub fn add_process(&self, pid: usize, process_name: String) {
-        let mut lock = match self.queue.lock() {
-            Ok(l) => l,
-            Err(e) => {
-                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
-                panic!();
+    /// Queues a process by PID to the Grt `ImageLoadQueueForInjector` waiting for the usermode engine to take it away
+    /// to instruct the Sanctum DLL to be injected.
+    pub fn queue_process_for_usermode(pid: usize) {
+        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+            "ImageLoadQueueForInjector",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in add_process. {:?}",
+                        e
+                    );
+                    panic!();
+                }
             },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in add_process. {:?}",
+                    e
+                );
+                panic!();
+            }
         };
 
         if lock.insert(pid) == false {
-            println!("[sanctum] [i] ImageLoadQueueForInjector had duplicate key for pid: {pid}, this should not occur.");
+            println!(
+                "[sanctum] [i] ImageLoadQueueForInjector had duplicate key for pid: {pid}, this should not occur."
+            );
+            panic!(); // maybe bsod here? this state should never occur
+        }
+
+        // Add the pid to the queue so that we can match the resulting DLL image load
+        Self::add_dll_injected_for_pid(pid);
+    }
+
+    /// Adds a process to the `Grt` for `ImageLoadQueuePendingInjection`.
+    pub fn add_dll_injected_for_pid(pid: usize) {
+        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in add_process. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in add_process. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        if lock.insert(pid) == false {
+            println!(
+                "[sanctum] [i] ImageLoadQueuePendingInjection had duplicate key for pid: {pid}, this should not occur."
+            );
+            panic!(); // maybe bsod here? this state should never occur
         }
     }
 
-    // todo will this fn be used? Drain probs preferred 
-    pub fn remove_process(&self, pid: usize) {
-        let mut lock = match self.queue.lock() {
-            Ok(l) => l,
-            Err(e) => {
-                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
-                panic!();
+    /// Removes a pid from the set which contains pids waiting for sanctum to be injected into them.
+    ///
+    /// # Returns
+    /// - `Ok` if the PID was present
+    /// - `Err` if the PID was not present - this would be indicative of threat actor manipulation
+    pub fn remove_pid_from_injection_waitlist(pid: usize) -> Result<(), ()> {
+        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                        e
+                    );
+                    panic!();
+                }
             },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                    e
+                );
+                panic!();
+            }
         };
 
-        let _ = lock.remove(&pid);
+        if lock.remove(&pid) == false {
+            return Err(());
+        }
+
+        Ok(())
+    }
+
+    /// Determines whether a PID is present in the waitlist for the ImageLoadQueuePendingInjection `Grt`.
+    ///
+    /// # Returns
+    /// `true` if the PID is present
+    /// `false` if the PID is not present
+    pub fn pid_in_waitlist(pid: usize) -> bool {
+        let lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+            "ImageLoadQueuePendingInjection",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                        e
+                    );
+                    panic!();
+                }
+            },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueuePendingInjection in remove_pid_from_injection_waitlist. {:?}",
+                    e
+                );
+                panic!();
+            }
+        };
+
+        lock.contains(&pid)
     }
 
     /// Drains the current state of the `ImageLoadQueueForInjector`, clearing the old structure for new data to be added in a
     /// async safe manner.
-    /// 
+    ///
     /// # Returns
     /// - `none` if the set was empty.
     /// - `some` containing the newly created pids.
-    pub fn drain(&self) -> Option<BTreeSet<usize>> {
-        let mut lock = match self.queue.lock() {
-            Ok(l) => l,
-            Err(e) => {
-                println!("[sanctum] [-] Could not lock FastMutex for add_process in ImageLoadQueueForInjector. {:?}", e);
-                panic!();
+    pub fn drain_queue_for_usermode() -> Option<BTreeSet<usize>> {
+        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+            "ImageLoadQueueForInjector",
+        ) {
+            Ok(l) => match l.lock() {
+                Ok(l) => l,
+                Err(e) => {
+                    println!(
+                        "[sanctum] [-] Error getting lock for ImageLoadQueueForInjector in add_process. {:?}",
+                        e
+                    );
+                    panic!();
+                }
             },
+            Err(e) => {
+                println!(
+                    "[sanctum] [-] Error getting FastMutex for ImageLoadQueueForInjector in add_process. {:?}",
+                    e
+                );
+                panic!();
+            }
         };
 
         if lock.is_empty() {

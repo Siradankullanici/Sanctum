@@ -1,16 +1,25 @@
 //! This module handles callback implementations and and other function related to processes.
 
-use alloc::{string::{String, ToString}, vec::Vec};
-use core::{ffi::c_void, iter::once, ptr::{null_mut, slice_from_raw_parts}, sync::atomic::Ordering};
+use alloc::{string::String, vec::Vec};
+use core::{
+    ffi::c_void,
+    iter::once,
+    ptr::{null_mut, slice_from_raw_parts},
+    sync::atomic::Ordering,
+    time::Duration,
+};
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
 use wdk_sys::{
     ntddk::{
-        KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, PsRemoveLoadImageNotifyRoutine, PsSetLoadImageNotifyRoutine, RtlInitUnicodeString
-    }, PsProcessType, APC_LEVEL, HANDLE, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PIMAGE_INFO, PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, PUNICODE_STRING, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, UNICODE_STRING, _IMAGE_INFO, _MODE::KernelMode, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS, _UNICODE_STRING
+        KeDelayExecutionThread, KeGetCurrentIrql, KeInitializeEvent, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, PsRemoveLoadImageNotifyRoutine, PsSetLoadImageNotifyRoutine, RtlInitUnicodeString
+    }, PsProcessType, APC_LEVEL, FALSE, HANDLE, KEVENT, LARGE_INTEGER, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _EVENT_TYPE::NotificationEvent, _IMAGE_INFO, _MODE::KernelMode, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS, _UNICODE_STRING
 };
 
-use crate::{DRIVER_MESSAGES, REGISTRATION_HANDLE, utils::unicode_to_string};
+use crate::{
+    DRIVER_MESSAGES, REGISTRATION_HANDLE, device_comms::ImageLoadQueueForInjector,
+    utils::unicode_to_string,
+};
 
 /// Callback function for a new process being created on the system.
 pub unsafe extern "C" fn process_create_callback(
@@ -218,6 +227,9 @@ unsafe extern "system" {
 }
 
 pub fn register_image_load_callback() -> NTSTATUS {
+    // Register the ImageLoadQueueForInjector which will instantiate the Grt containing the mutex for async
+    // access.
+    ImageLoadQueueForInjector::init();
     unsafe { PsSetLoadImageNotifyRoutine(Some(image_load_callback)) }
 }
 
@@ -226,11 +238,31 @@ pub fn unregister_image_load_callback() {
 }
 
 /// The callback function for image load events (exe, dll)
+///
+/// # Remarks
+/// This routine will be called by the operating system to notify the driver when a driver image or a user image 
+/// (for example, a DLL or EXE) is mapped into virtual memory. The operating system invokes this routine after an 
+/// image has been mapped to memory, but before its entrypoint is called.
+/// 
+/// **IMPORTANT NOTE:** The operating system does not call load-image notify routines when sections created with the `SEC_IMAGE_NO_EXECUTE` 
+/// attribute are mapped to virtual memory. This shouldn't affect early bird techniques - but WILL need attention in the future
+/// as this attribute could be used in process hollowing etc to avoid detection with our filter callback here. 
+/// 
+/// todo One way to defeat this once I get round to it would be hooking the NTAPI with our DLL and refusing any attempt to use that
+/// parameter; or we could dynamically change it at runtime. My Ghost Hunting technique should allow us to detect a threat actor 
+/// trying to use direct syscalls etc to bypass the hook.
+/// 
+/// Some links on this:
+/// 
+/// - https://www.secforce.com/blog/dll-hollowing-a-deep-dive-into-a-stealthier-memory-allocation-variant/
+/// - https://www.cyberark.com/resources/threat-research-blog/masking-malicious-memory-artifacts-part-ii-insights-from-moneta
 extern "C" fn image_load_callback(
     image_name: *mut _UNICODE_STRING,
     pid: HANDLE,
     image_info: *mut _IMAGE_INFO,
 ) {
+    // todo can i use this callback in an attempt to detect DLL SOH?? :)
+
     // I guess these should never be null
     if image_info.is_null() || image_name.is_null() {
         return;
@@ -243,27 +275,77 @@ extern "C" fn image_load_callback(
 
     // Check the inbound pointers
     if image_info.is_null() || image_name.is_null() {
-        println!("[sanctum] [-] Pointers were null in image_load_callback, and this is unexpected.");
+        println!(
+            "[sanctum] [-] Pointers were null in image_load_callback, and this is unexpected."
+        );
         return;
     }
 
-    // // SAFETY: Pointers validated so deref
+    // SAFETY: Pointers validated above
     let image_name = unsafe { *image_name };
     let image_info = unsafe { *image_info };
 
     let name_slice = slice_from_raw_parts(image_name.Buffer, (image_name.Length / 2) as usize);
-    let name = String::from_utf16_lossy(unsafe {&*name_slice});
+    let name = String::from_utf16_lossy(unsafe { &*name_slice });
 
-    // For now only concern ourselves with image loads where its an exe
-    if !name.contains(".exe") {
+    // For now only concern ourselves with image loads where its an exe, except in the event its the sanctum EDR DLL -
+    // see below comments for why.
+    if name.ends_with(".dll") && !name.contains("sanctum.dll") {
         return;
     }
 
-    println!("name: {:?}, base: {:p}", name, image_info.ImageBase);
+    println!(
+        "Adding process: {:?}, pid: {}, base: {:p} to ImageLoadQueueForInjector",
+        name, pid as usize, image_info.ImageBase
+    );
 
-    // Step 1: Instruct the engine to inject the DLL
+    // Now we are into the 'meat' of the callback routine. To see why we are doing what we are doing here,
+    // please refer to the function definition. In a nutshell, queue the process creation, the usermode engine
+    // will poll the driver for new processes; the driver will wait for notification our DLL is injected.
+    //
+    // We can get around waiting on an IOCTL to come back from usermode by seeing when "sanctum.dll" is mapped into
+    // the PID. This presents one potential 'vulnerability' in that a malicious process could attempt to inject a DLL
+    // named "sanctum.dll" into our process; we can get around this by maintaining a second Grt mutex which contains
+    // the PIDs that are pending the sanctum dll being injected. In the event the PID has been removed (aka we have a
+    // sanctum.dll injected in) we know either foul play is detected (a TA is trying to exploit this vulnerability in the
+    // implementation), or a unforeseen sanctum related error has occurred.
+    //
+    // **NOTE**: Handling the draining of the `ImageLoadQueueForInjector` and adding the pid to the pending `Grt` is handled
+    // in the `driver_communication` module - we dont need to worry about that implementation here, it will happen here
+    // as if 'by magic'. See the implementation there for more details.
+    //
+    // In either case; we can freeze the process and alert the user to possible malware / dump the process / kill the process
+    // etc.
+    //
+    // Depending on performance; we could also fast hash the "sanctum.dll"  bytes to see whether it matches the expected DLL -
+    // this *may* be more performant than accessing the Grt, but for now, this works.
+    //
+    // todo would be nice to make an API for this as we will likely want to use this in various other places in the EDR.
 
-    // Step 2: Loop until done (recv ioctl, going to have to be handled async)
+    // todo the match here should be done on the full path to accidental prevent name collisions
+    if name.ends_with("sanctum.dll") {
+        if ImageLoadQueueForInjector::remove_pid_from_injection_waitlist(pid as usize).is_err() {
+            // todo handle threat detection here
+        }
+    }
 
-    // Step 3: Return / do other things
+    ImageLoadQueueForInjector::queue_process_for_usermode(pid as usize);
+
+    let delay_as_duration = Duration::from_millis(300);
+    let mut thread_sleep_time = LARGE_INTEGER {
+        QuadPart: -((delay_as_duration.as_nanos() / 100) as i64),
+    };
+
+    loop {
+        // todo I'd rather use a KEVENT than a loop - just need to think about the memory model for it.
+        // Tried implementing this now, but as im at POC phase it required quite a bit of a refactor, so i'll do this in the
+        // future more likely. Leaving the todo in to work on this later :)
+        // The least we can do is make the threat alertable so we aren't starving too many resources.
+        let _ = unsafe { KeDelayExecutionThread(KernelMode as _, TRUE as _, &mut thread_sleep_time) };
+
+        if !ImageLoadQueueForInjector::pid_in_waitlist(pid as usize) {
+            println!("[sanctum] [i] DLL injected into PID: {}.", pid as usize);
+            break;
+        }
+    }
 }
