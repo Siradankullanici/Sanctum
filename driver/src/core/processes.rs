@@ -286,19 +286,13 @@ extern "C" fn image_load_callback(
     let image_info = unsafe { *image_info };
 
     let name_slice = slice_from_raw_parts(image_name.Buffer, (image_name.Length / 2) as usize);
-    let name = String::from_utf16_lossy(unsafe { &*name_slice });
+    let name = String::from_utf16_lossy(unsafe { &*name_slice }).to_lowercase();
 
     // For now only concern ourselves with image loads where its an exe, except in the event its the sanctum EDR DLL -
     // see below comments for why.
     if name.contains(".dll") && !name.contains("sanctum.dll") {
-        println!("DLL found. Returning {}", name);
         return;
     }
-
-    println!(
-        "Adding process: {:?}, pid: {}, base: {:p} to ImageLoadQueueForInjector",
-        name, pid as usize, image_info.ImageBase
-    );
 
     // Now we are into the 'meat' of the callback routine. To see why we are doing what we are doing here,
     // please refer to the function definition. In a nutshell, queue the process creation, the usermode engine
@@ -330,6 +324,16 @@ extern "C" fn image_load_callback(
         }
     }
 
+    // For now, only inject into these processes whilst we test
+    if !(name.contains("notepad.exe") || name.contains("malware.exe") || name.contains("powershell.exe")) {
+        return;
+    }
+
+    println!(
+        "Adding process: {:?}, pid: {}, base: {:p} to ImageLoadQueueForInjector",
+        name, pid as usize, image_info.ImageBase
+    );
+
     ImageLoadQueueForInjector::queue_process_for_usermode(pid as usize);
 
     let delay_as_duration = Duration::from_millis(300);
@@ -345,7 +349,7 @@ extern "C" fn image_load_callback(
         let _ = unsafe { KeDelayExecutionThread(KernelMode as _, TRUE as _, &mut thread_sleep_time) };
 
         if !ImageLoadQueueForInjector::pid_in_waitlist(pid as usize) {
-            println!("[sanctum] [i] DLL injected into PID: {}.", pid as usize);
+            println!("[sanctum] [i] DLL injected into PID: {}!", pid as usize);
             break;
         }
     }
