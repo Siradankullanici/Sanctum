@@ -5,13 +5,12 @@ use crate::{
     utils::{DriverError, Log, check_driver_version},
 };
 use alloc::{
-    collections::{btree_map::BTreeMap, btree_set::BTreeSet},
     format,
     string::String,
 };
 use shared_no_std::{
     constants::SanctumVersion,
-    driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated},
+    driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
     ioctl::{DriverMessages, SancIoctlPing},
 };
 use wdk::println;
@@ -600,7 +599,7 @@ impl ImageLoadQueueForInjector {
     pub fn init() {
         match Grt::register_fast_mutex_checked(
             "ImageLoadQueueForInjector",
-            BTreeSet::<usize>::new(),
+            ImageLoadQueues::new(),
         ) {
             Ok(_) => (),
             Err(e) => {
@@ -614,7 +613,7 @@ impl ImageLoadQueueForInjector {
 
         match Grt::register_fast_mutex_checked(
             "ImageLoadQueuePendingInjection",
-            BTreeSet::<usize>::new(),
+            ImageLoadQueues::new(),
         ) {
             Ok(_) => (),
             Err(e) => {
@@ -630,7 +629,7 @@ impl ImageLoadQueueForInjector {
     /// Queues a process by PID to the Grt `ImageLoadQueueForInjector` waiting for the usermode engine to take it away
     /// to instruct the Sanctum DLL to be injected.
     pub fn queue_process_for_usermode(pid: usize) {
-        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
             "ImageLoadQueueForInjector",
         ) {
             Ok(l) => match l.lock() {
@@ -665,7 +664,7 @@ impl ImageLoadQueueForInjector {
 
     /// Adds a process to the `Grt` for `ImageLoadQueuePendingInjection`.
     pub fn add_dll_injected_for_pid(pid: usize) {
-        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
             "ImageLoadQueuePendingInjection",
         ) {
             Ok(l) => match l.lock() {
@@ -701,7 +700,7 @@ impl ImageLoadQueueForInjector {
     /// - `Ok` if the PID was present
     /// - `Err` if the PID was not present - this would be indicative of threat actor manipulation
     pub fn remove_pid_from_injection_waitlist(pid: usize) -> Result<(), ()> {
-        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
             "ImageLoadQueuePendingInjection",
         ) {
             Ok(l) => match l.lock() {
@@ -736,7 +735,7 @@ impl ImageLoadQueueForInjector {
     /// `true` if the PID is present
     /// `false` if the PID is not present
     pub fn pid_in_waitlist(pid: usize) -> bool {
-        let lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+        let lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
             "ImageLoadQueuePendingInjection",
         ) {
             Ok(l) => match l.lock() {
@@ -767,8 +766,8 @@ impl ImageLoadQueueForInjector {
     /// # Returns
     /// - `none` if the set was empty.
     /// - `some` containing the newly created pids.
-    pub fn drain_queue_for_usermode() -> Option<BTreeSet<usize>> {
-        let mut lock: FastMutexGuard<BTreeSet<usize>> = match Grt::get_fast_mutex(
+    pub fn drain_queue_for_usermode() -> Option<ImageLoadQueues> {
+        let mut lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
             "ImageLoadQueueForInjector",
         ) {
             Ok(l) => match l.lock() {
