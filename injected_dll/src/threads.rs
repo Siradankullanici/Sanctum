@@ -1,19 +1,19 @@
 use windows::{
-    core::PCSTR,
     Win32::{
         Foundation::{CloseHandle, HANDLE},
         System::{
             Diagnostics::ToolHelp::{
-                CreateToolhelp32Snapshot, Thread32First, Thread32Next, TH32CS_SNAPTHREAD,
-                THREADENTRY32,
+                CreateToolhelp32Snapshot, TH32CS_SNAPTHREAD, THREADENTRY32, Thread32First,
+                Thread32Next,
             },
             Threading::{
                 GetCurrentProcessId, GetCurrentThreadId, OpenThread, ResumeThread, SuspendThread,
                 THREAD_SUSPEND_RESUME,
             },
         },
-        UI::WindowsAndMessaging::{MessageBoxA, MB_OK},
+        UI::WindowsAndMessaging::{MB_OK, MessageBoxA},
     },
+    core::PCSTR,
 };
 
 /// Suspend all threads in the current process except for the thread executing our EDR setup (i.e. the current thread)

@@ -1,4 +1,4 @@
-use windows::{core::PWSTR, Win32::System::WindowsProgramming::GetUserNameW};
+use windows::{Win32::System::WindowsProgramming::GetUserNameW, core::PWSTR};
 
 pub fn get_logged_in_username() -> Result<String, String> {
     // get the username of the current logged in user to resolve locations

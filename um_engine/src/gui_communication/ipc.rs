@@ -19,7 +19,7 @@ use crate::{
         log::{Log, LogLevel},
     },
 };
-use serde_json::{from_slice, to_value, to_vec, Value};
+use serde_json::{Value, from_slice, to_value, to_vec};
 use shared_no_std::{
     constants::PIPE_NAME,
     ipc::{CommandRequest, CommandResponse},

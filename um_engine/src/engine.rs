@@ -5,7 +5,7 @@ use tokio::sync::Mutex;
 use windows::Win32::{
     Foundation::GetLastError,
     System::Diagnostics::ToolHelp::{
-        CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32, TH32CS_SNAPALL,
+        CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next, TH32CS_SNAPALL,
     },
 };
 

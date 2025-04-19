@@ -24,7 +24,6 @@ pub enum ScanResult {
     ScanInProgress,
 }
 
-
 /// Structure for containing results pertaining to an IOC match
 #[derive(Debug, Serialize, Deserialize, PartialEq, Clone)]
 pub struct MatchedIOC {

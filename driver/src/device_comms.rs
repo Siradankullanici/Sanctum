@@ -4,10 +4,7 @@ use crate::{
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
     utils::{DriverError, Log, check_driver_version},
 };
-use alloc::{
-    format,
-    string::String,
-};
+use alloc::{format, string::String};
 use shared_no_std::{
     constants::SanctumVersion,
     driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
@@ -501,7 +498,7 @@ pub fn ioctl_get_image_load_len(pirp: PIRP) -> Result<(), DriverError> {
     }
 
     // We want to drain the live copy of the ImageLoadQueueForInjector into the cache (handled by the `drain_queue` fn)
-    // and check the size of the returned data, which will be the memory size of the cache. We can then send this back to 
+    // and check the size of the returned data, which will be the memory size of the cache. We can then send this back to
     // userland and make a subsequent IOCTL which will drain the cached copy, sending it to userland.
     let data = ImageLoadQueueForInjector::drain_queue(ImageLoadQueueSelector::Live);
     if data.is_none() {
@@ -515,7 +512,7 @@ pub fn ioctl_get_image_load_len(pirp: PIRP) -> Result<(), DriverError> {
         Err(e) => {
             println!("[sanctum] [-] Unable to serialise the BTreeSet. {e}");
             return Err(DriverError::CouldNotSerialize);
-        },
+        }
     };
 
     let data_len = serialised.as_bytes().len();
@@ -638,7 +635,7 @@ pub struct ImageLoadQueueForInjector;
 impl ImageLoadQueueForInjector {
     /// Initialises the ImageLoadQueueForInjector, which uses the `wdk_mutex` Grt for global access to a mutex containing
     /// the image load 'queue'.
-    /// 
+    ///
     /// Initialises ImageLoadCache, which will be drained by the final IOCTL once the size is known.
     ///
     /// Initialises the `ImageLoadQueuePendingInjection` Grt, which is used by the image load callback routine to wait
@@ -649,10 +646,8 @@ impl ImageLoadQueueForInjector {
     /// # Panics
     /// This function will cause a driver panic if it is unable to register the mutex with the `Grt`.
     pub fn init() {
-        match Grt::register_fast_mutex_checked(
-            "ImageLoadQueueForInjector",
-            ImageLoadQueues::new(),
-        ) {
+        match Grt::register_fast_mutex_checked("ImageLoadQueueForInjector", ImageLoadQueues::new())
+        {
             Ok(_) => (),
             Err(e) => {
                 println!(
@@ -663,10 +658,7 @@ impl ImageLoadQueueForInjector {
             }
         };
 
-        match Grt::register_fast_mutex_checked(
-            "ImageLoadCache",
-            ImageLoadQueues::new(),
-        ) {
+        match Grt::register_fast_mutex_checked("ImageLoadCache", ImageLoadQueues::new()) {
             Ok(_) => (),
             Err(e) => {
                 println!(
@@ -871,7 +863,9 @@ impl ImageLoadQueueForInjector {
         // If we drained the live queue, we need to add this to the cache
         match queue_type {
             ImageLoadQueueSelector::Live => {
-                let mut cache_lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex("ImageLoadCache") {
+                let mut cache_lock: FastMutexGuard<ImageLoadQueues> = match Grt::get_fast_mutex(
+                    "ImageLoadCache",
+                ) {
                     Ok(l) => match l.lock() {
                         Ok(l) => l,
                         Err(e) => {
@@ -893,7 +887,7 @@ impl ImageLoadQueueForInjector {
 
                 cache_lock.append(&mut dup);
                 return Some((*cache_lock).clone());
-            },
+            }
             _ => (),
         }
 

@@ -1,5 +1,5 @@
-use std::mem::take;
 use shared_no_std::driver_ipc::ProcessStarted;
+use std::mem::take;
 
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum DriverState {
@@ -18,11 +18,10 @@ pub struct KernelDbgMsgQueue {
 }
 
 impl KernelDbgMsgQueue {
-
     /// Get the data held in the struct.
-    /// 
+    ///
     /// # Performance
-    /// 
+    ///
     /// This will make a deep clone of the underlying data.
     pub fn get(&self) -> KernelDbgMsgQueue {
         self.clone()
@@ -50,5 +49,4 @@ impl KernelDbgMsgQueue {
     pub fn get_and_empty(&mut self) -> KernelDbgMsgQueue {
         take(self)
     }
-    
 }

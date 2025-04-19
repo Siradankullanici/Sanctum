@@ -16,7 +16,9 @@ pub fn send_ipc_to_engine(data: DLLMessage) {
             Ok(client) => break client,
             // If the pipe is busy, try again after a wait
             Err(e) if e.raw_os_error() == Some(ERROR_PIPE_BUSY.0 as _) => (),
-            Err(e) => println!("[sanctum] [-] An error occurred talking to the engine, {e}. Trying again.."), // todo is this acceptable?
+            Err(e) => println!(
+                "[sanctum] [-] An error occurred talking to the engine, {e}. Trying again.."
+            ), // todo is this acceptable?
         }
 
         sleep(Duration::from_millis(50));

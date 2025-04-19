@@ -1,6 +1,6 @@
 use std::{
     collections::HashMap,
-    ffi::{c_void, CStr},
+    ffi::{CStr, c_void},
     fmt::Debug,
     rc::Rc,
     time::{Duration, SystemTime},
@@ -9,28 +9,28 @@ use std::{
 use shared_no_std::{constants::SANCTUM_DLL_RELATIVE_PATH, driver_ipc::ProcessStarted};
 use shared_std::processes::{GhostHuntingTimer, NtFunction, Process, Syscall, SyscallEventSource};
 use windows::{
-    core::{s, PSTR},
     Win32::{
         Foundation::{CloseHandle, GetLastError, MAX_PATH},
         System::{
             Diagnostics::{
                 Debug::WriteProcessMemory,
                 ToolHelp::{
-                    CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+                    CreateToolhelp32Snapshot, PROCESSENTRY32, Process32First, Process32Next,
                     TH32CS_SNAPALL,
                 },
             },
             LibraryLoader::{GetModuleHandleA, GetProcAddress},
-            Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE},
+            Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
             Threading::{
-                CreateRemoteThread, GetCurrentProcessId, OpenProcess, QueryFullProcessImageNameA,
-                PROCESS_ALL_ACCESS, PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD,
-                PROCESS_DUP_HANDLE, PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION,
-                PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE,
-                PROCESS_VM_OPERATION, PROCESS_VM_READ, PROCESS_VM_WRITE,
+                CreateRemoteThread, GetCurrentProcessId, OpenProcess, PROCESS_ALL_ACCESS,
+                PROCESS_CREATE_PROCESS, PROCESS_CREATE_THREAD, PROCESS_DUP_HANDLE,
+                PROCESS_NAME_FORMAT, PROCESS_QUERY_INFORMATION, PROCESS_QUERY_LIMITED_INFORMATION,
+                PROCESS_SUSPEND_RESUME, PROCESS_TERMINATE, PROCESS_VM_OPERATION, PROCESS_VM_READ,
+                PROCESS_VM_WRITE, QueryFullProcessImageNameA,
             },
         },
     },
+    core::{PSTR, s},
 };
 
 use crate::utils::{
@@ -363,8 +363,7 @@ impl ProcessMonitor {
                             process.ghost_hunting_timers.remove(index);
                             println!(
                                 "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
-                                item.event_type,
-                                process.pid
+                                item.event_type, process.pid
                             );
                             break;
                         }
@@ -374,8 +373,7 @@ impl ProcessMonitor {
                             process.ghost_hunting_timers.remove(index);
                             println!(
                                 "******* RISK SCORE RAISED AS TIMER EXCEEDED on: {:?}, pid responsible: {}",
-                                item.event_type,
-                                process.pid
+                                item.event_type, process.pid
                             );
                             break;
                         }

@@ -2,18 +2,20 @@ use std::{sync::Arc, time::Duration};
 
 use shared_std::processes::Process;
 use tokio::{
-    sync::{mpsc, Mutex, RwLock},
+    sync::{Mutex, RwLock, mpsc},
     time::sleep,
 };
 
 use crate::{
-    core::process_monitor::inject_edr_dll, driver_manager::SanctumDriverManager, utils::log::{Log, LogLevel}
+    core::process_monitor::inject_edr_dll,
+    driver_manager::SanctumDriverManager,
+    utils::log::{Log, LogLevel},
 };
 
 use super::{
     ipc_etw_consumer::run_ipc_for_etw,
     ipc_injected_dll::run_ipc_for_injected_dll,
-    process_monitor::{snapshot_all_processes, ProcessMonitor},
+    process_monitor::{ProcessMonitor, snapshot_all_processes},
 };
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates

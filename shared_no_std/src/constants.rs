@@ -23,12 +23,26 @@ pub struct SanctumVersion<'a> {
 }
 
 pub static RELEASE_NAME: &str = "Sanctify";
-pub static VERSION_DRIVER: SanctumVersion = SanctumVersion { major: 0, minor: 0, patch: 2, name: "Light's Resolve" };
-pub static VERSION_CLIENT: SanctumVersion = SanctumVersion { major: 0, minor: 0, patch: 2, name: "Light's Resolve"};
+pub static VERSION_DRIVER: SanctumVersion = SanctumVersion {
+    major: 0,
+    minor: 0,
+    patch: 2,
+    name: "Light's Resolve",
+};
+pub static VERSION_CLIENT: SanctumVersion = SanctumVersion {
+    major: 0,
+    minor: 0,
+    patch: 2,
+    name: "Light's Resolve",
+};
 
 impl Display for SanctumVersion<'_> {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        write!(f, "{}.{}.{} - {}", self.major, self.minor, self.patch, self.name)
+        write!(
+            f,
+            "{}.{}.{} - {}",
+            self.major, self.minor, self.patch, self.name
+        )
     }
 }
 
@@ -37,6 +51,7 @@ impl Display for SanctumVersion<'_> {
 //
 pub static SANC_SYS_FILE_LOCATION: &str = "Sanctum\\sanctum.sys";
 pub static IOC_LIST_LOCATION: &str = "Sanctum\\ioc_list.txt";
-pub static IOC_URL: &str = "https://raw.githubusercontent.com/0xflux/Sanctum/refs/heads/main/ioc_list.txt";
+pub static IOC_URL: &str =
+    "https://raw.githubusercontent.com/0xflux/Sanctum/refs/heads/main/ioc_list.txt";
 pub static LOG_PATH: &str = r"logs\sanctum.log";
 pub static SANCTUM_DLL_RELATIVE_PATH: &str = "Sanctum\\sanctum.dll";

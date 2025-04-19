@@ -5,9 +5,14 @@ use crate::utils::log::LogLevel;
 use super::driver_manager::SanctumDriverManager;
 use core::str;
 use shared_no_std::{
-    constants::VERSION_CLIENT, driver_ipc::ImageLoadQueues, ioctl::{
-        DriverMessages, SancIoctlPing, SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
-    }
+    constants::VERSION_CLIENT,
+    driver_ipc::ImageLoadQueues,
+    ioctl::{
+        DriverMessages, SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
+        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
+        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
+        SancIoctlPing,
+    },
 };
 use std::{ffi::c_void, slice::from_raw_parts};
 use windows::Win32::System::IO::DeviceIoControl;

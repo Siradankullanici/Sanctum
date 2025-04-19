@@ -1,18 +1,23 @@
 //! This module deals with integrity checking of the internal process that the Sanctum DLL is injected into.
 
 use std::{
-    ffi::{c_void, CStr}, thread::sleep, time::Duration
+    ffi::{CStr, c_void},
+    thread::sleep,
+    time::Duration,
 };
 
 use md5::{Digest, Md5};
 use shared_std::processes::DLLMessage;
 use windows::{
+    Win32::{
+        Foundation::HANDLE,
+        System::{
+            Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER},
+            LibraryLoader::GetModuleHandleA,
+            SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE},
+        },
+    },
     core::s,
-    Win32::{Foundation::HANDLE, System::{
-        Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER},
-        LibraryLoader::GetModuleHandleA,
-        SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE},
-    }},
 };
 
 use crate::{ipc::send_ipc_to_engine, threads::suspend_all_threads};
@@ -46,7 +51,6 @@ struct NtdllIntegrity {
 
 impl NtdllIntegrity {
     fn new() -> Self {
-        
         let (base_of_code, size_of_text_sec) = get_base_and_sz_ntdll();
 
         assert_ne!(size_of_text_sec, 0);
@@ -61,8 +65,8 @@ impl NtdllIntegrity {
 
 pub fn get_base_and_sz_ntdll() -> (usize, usize) {
     // `module` will contain the base address of the DLL
-    let module = unsafe { GetModuleHandleA(s!("ntdll.dll")) }
-    .expect("[-] Could not get a handle to NTDLL");
+    let module =
+        unsafe { GetModuleHandleA(s!("ntdll.dll")) }.expect("[-] Could not get a handle to NTDLL");
 
     //
     // Resolve the Virtual Address address & size of the .text section
@@ -144,37 +148,37 @@ fn hash_ntdll_text_segment(ntdll_info: &NtdllIntegrity) -> String {
 }
 
 /// The worker routine in a thread which checks for NTDLL hash changes, this will detect:
-/// 
+///
 /// 1 - Remapping NTDLL such that an unhooked version is copied into memory; and
 /// 2 - Patching instructions in NTDLL, such as ETW / AMSI bypass techniques.
-/// 
+///
 /// The function runs a main 'event loop' which monitors the integrity of NTDLL in memory
 /// for changes based on a hash generated. If a change is detected, the EDR will suspend all process threads
-/// to limit the impact of the attack, and wait on an instruction from the central EDR engine. 
-/// 
-/// **Note**: the response to this by the EDR is not yet implemented, so the process will just hang until 
+/// to limit the impact of the attack, and wait on an instruction from the central EDR engine.
+///
+/// **Note**: the response to this by the EDR is not yet implemented, so the process will just hang until
 /// terminated.
-/// 
+///
 /// # Considerations
-/// 
+///
 /// This monitoring is **expensive** as it runs in a tight loop; further experimentation is needed
-/// to tune this, or find methods that maximise coverage without overly degrading system performance. 
-/// The challenge is presented mostly through malware which would temporarily patch NTDLL, and revert 
-/// the segment after the malicious operations are complete. Otherwise, we could also check the 
-/// integrity on program exit; but if it was modified before that point back to the hooked version, 
+/// to tune this, or find methods that maximise coverage without overly degrading system performance.
+/// The challenge is presented mostly through malware which would temporarily patch NTDLL, and revert
+/// the segment after the malicious operations are complete. Otherwise, we could also check the
+/// integrity on program exit; but if it was modified before that point back to the hooked version,
 /// our integrity checker would be non-the-wiser.
-/// 
-/// Alternatively, we could use ETW: Threat Intelligence to monitor memory writes to the NTDLL Virtual 
-/// Address region. Whilst we couldn't block it via ETW monitoring, we can still detect it happening in 
-/// 'near' real time. Given messing with ETW:TI requires **significant** effort by the adversary, most 
-/// of which we can now block / detect, this significantly raises the bar for the  adversary able to 
+///
+/// Alternatively, we could use ETW: Threat Intelligence to monitor memory writes to the NTDLL Virtual
+/// Address region. Whilst we couldn't block it via ETW monitoring, we can still detect it happening in
+/// 'near' real time. Given messing with ETW:TI requires **significant** effort by the adversary, most
+/// of which we can now block / detect, this significantly raises the bar for the  adversary able to
 /// breach the EDR defences to this technique, which may be **good enough** to filter out 99% of threats.
 fn periodically_check_ntdll_hash(ntdll: NtdllIntegrity) -> ! {
     loop {
         let hash = hash_ntdll_text_segment(&ntdll);
 
         // Check for tampering with NTDLL.
-        // If tampering is detected, suspend all threads except our EDR thread, and notify the 
+        // If tampering is detected, suspend all threads except our EDR thread, and notify the
         // engine of the event.
         if hash != ntdll.hash {
             let threads: Vec<HANDLE> = suspend_all_threads();
@@ -186,10 +190,10 @@ fn periodically_check_ntdll_hash(ntdll: NtdllIntegrity) -> ! {
             send_ipc_to_engine(DLLMessage::NtdllOverwrite);
             hash_ntdll_text_segment(&ntdll);
 
-            // todo wait for response from EDR as to whether to allow the change, or 
+            // todo wait for response from EDR as to whether to allow the change, or
             // if the process needs memory dumping & terminating for an analyst to pick up
             loop {
-                // loop waiting for instruction 
+                // loop waiting for instruction
                 sleep(Duration::from_secs(3));
             }
         }

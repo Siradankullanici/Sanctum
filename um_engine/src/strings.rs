@@ -3,8 +3,8 @@
 use std::error::Error;
 
 use windows::{
-    core::{PCWSTR, PWSTR},
     Win32::Foundation::UNICODE_STRING,
+    core::{PCWSTR, PWSTR},
 };
 
 pub trait ToUnicodeString {

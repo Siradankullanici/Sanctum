@@ -3,11 +3,20 @@
 
 use std::mem;
 
-use windows::Win32::{Foundation::{FALSE, GENERIC_ALL}, Security::{AddAccessAllowedAceEx, AllocateAndInitializeSid, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor, SetSecurityDescriptorDacl, ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, CONTAINER_INHERIT_ACE, OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR, SECURITY_WORLD_SID_AUTHORITY}, System::SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID}};
+use windows::Win32::{
+    Foundation::{FALSE, GENERIC_ALL},
+    Security::{
+        ACCESS_ALLOWED_ACE, ACL, ACL_REVISION, AddAccessAllowedAceEx, AllocateAndInitializeSid,
+        CONTAINER_INHERIT_ACE, GetSidLengthRequired, InitializeAcl, InitializeSecurityDescriptor,
+        OBJECT_INHERIT_ACE, PSECURITY_DESCRIPTOR, PSID, SECURITY_ATTRIBUTES, SECURITY_DESCRIPTOR,
+        SECURITY_WORLD_SID_AUTHORITY, SetSecurityDescriptorDacl,
+    },
+    System::SystemServices::{SECURITY_DESCRIPTOR_REVISION, SECURITY_WORLD_RID},
+};
 
 /// Create a permissive security descriptor allowing processes at all user levels, groups, etc to access this named pipe.
 /// This will ensure processes at a low privilege can communicate with the pipe
-/// 
+///
 /// # Note
 /// A number of heap allocated structures will be leaked via `Box::leak()` - this is okay and not considered a memory leak as
 /// this will be called once during the creation of the named pipe and then are required for the duration of the process.
@@ -25,7 +34,6 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
         .ok()
         .expect("InitializeSecurityDescriptor failed");
 
-
         //
         // build the ACL and add the Everyone ACE
         //
@@ -35,15 +43,10 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
         let mut acl_buf = Vec::with_capacity(acl_size as usize);
         acl_buf.set_len(acl_size as usize); // reserve space
 
-        InitializeAcl(
-            acl_buf.as_mut_ptr() as *mut ACL,
-            acl_size,
-            ACL_REVISION,
-        )
-        .ok()
-        .expect("InitializeAcl failed");
+        InitializeAcl(acl_buf.as_mut_ptr() as *mut ACL, acl_size, ACL_REVISION)
+            .ok()
+            .expect("InitializeAcl failed");
 
-        
         //
         // Allocate the SID for Everyone
         //
@@ -52,7 +55,13 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
             &SECURITY_WORLD_SID_AUTHORITY,
             1,
             SECURITY_WORLD_RID as u32,
-            0,0,0,0,0,0,0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
             &mut everyone_sid,
         )
         .ok()
@@ -68,7 +77,6 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
         .ok()
         .expect("AddAccessAllowedAceEx failed");
 
-
         //
         // Attach the ACL to the descriptor
         //
@@ -81,7 +89,6 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
         .ok()
         .expect("SetSecurityDescriptorDacl failed");
 
-
         //
         // Allocate SECURITY_ATTRIBUTES on the heap and fill it
         //
@@ -91,9 +98,8 @@ pub fn create_security_attributes() -> SECURITY_ATTRIBUTES {
             bInheritHandle: FALSE,
         };
 
-
-        // 
-        // Leak everything so that we can ensure their lifetime is valid for the duration of the 
+        //
+        // Leak everything so that we can ensure their lifetime is valid for the duration of the
         // entire program. The memory will be cleaned up when the process exits.
         //
         // Box::leak(sd_box);

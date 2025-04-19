@@ -11,9 +11,19 @@ use core::{
 use shared_no_std::driver_ipc::{HandleObtained, ProcessStarted, ProcessTerminated};
 use wdk::println;
 use wdk_sys::{
+    _IMAGE_INFO,
+    _MODE::KernelMode,
+    _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS,
+    _UNICODE_STRING, APC_LEVEL, HANDLE, LARGE_INTEGER, NTSTATUS, OB_CALLBACK_REGISTRATION,
+    OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE,
+    OB_OPERATION_REGISTRATION, OB_PRE_OPERATION_INFORMATION, OB_PREOP_CALLBACK_STATUS, PEPROCESS,
+    PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, PsProcessType, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
+    TRUE, UNICODE_STRING,
     ntddk::{
-        KeDelayExecutionThread, KeGetCurrentIrql, KeInitializeEvent, ObOpenObjectByPointer, ObRegisterCallbacks, PsGetCurrentProcessId, PsGetProcessId, PsRemoveLoadImageNotifyRoutine, PsSetLoadImageNotifyRoutine, RtlInitUnicodeString
-    }, PsProcessType, APC_LEVEL, FALSE, HANDLE, KEVENT, LARGE_INTEGER, NTSTATUS, OB_CALLBACK_REGISTRATION, OB_FLT_REGISTRATION_VERSION, OB_OPERATION_HANDLE_CREATE, OB_OPERATION_HANDLE_DUPLICATE, OB_OPERATION_REGISTRATION, OB_PREOP_CALLBACK_STATUS, OB_PRE_OPERATION_INFORMATION, PEPROCESS, PROCESS_ALL_ACCESS, PS_CREATE_NOTIFY_INFO, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, TRUE, UNICODE_STRING, _EVENT_TYPE::NotificationEvent, _IMAGE_INFO, _MODE::KernelMode, _OB_PREOP_CALLBACK_STATUS::OB_PREOP_SUCCESS, _UNICODE_STRING
+        KeDelayExecutionThread, KeGetCurrentIrql, ObOpenObjectByPointer, ObRegisterCallbacks,
+        PsGetCurrentProcessId, PsGetProcessId, PsRemoveLoadImageNotifyRoutine,
+        PsSetLoadImageNotifyRoutine, RtlInitUnicodeString,
+    },
 };
 
 use crate::{
@@ -25,7 +35,7 @@ use crate::{
 pub unsafe extern "C" fn process_create_callback(
     process: PEPROCESS,
     pid: HANDLE,
-    created: *mut PS_CREATE_NOTIFY_INFO,
+    create_info: *mut PS_CREATE_NOTIFY_INFO,
 ) {
     //
     // If `created` is not a null pointer, this means a new process was started, and you can query the
@@ -34,12 +44,13 @@ pub unsafe extern "C" fn process_create_callback(
     // In the event that `create` is null, it means a process was terminated.
     //
 
-    if !created.is_null() {
+    if !create_info.is_null() {
         // process started
 
-        let image_name = unicode_to_string((*created).ImageFileName);
-        let command_line = unicode_to_string((*created).CommandLine);
-        let parent_pid = (*created).ParentProcessId as u64;
+        let image_name = unicode_to_string((*create_info).ImageFileName);
+        let command_line = unicode_to_string((*create_info).CommandLine);
+        let parent_pid = (*create_info).ParentProcessId as u64;
+        // (*create_info).
         let pid = pid as u64;
 
         if image_name.is_err() || command_line.is_err() {
@@ -75,9 +86,6 @@ pub unsafe extern "C" fn process_create_callback(
                 size_of::<ProcessLoggingInformation>() as _,
             )
         };
-        // println!("RESULT OF ZwSetInformationProcess: {}", result);
-
-        // todo if image name is malware, here we need to instruct the DLL to be inserted
 
         let process_started = ProcessStarted {
             image_name: image_name.unwrap().replace("\\??\\", ""),
@@ -85,6 +93,10 @@ pub unsafe extern "C" fn process_create_callback(
             parent_pid,
             pid,
         };
+
+        if process_started.image_name.contains("otepad") {
+            println!("[sanctum] [i] Notepad created, pid: {}, ppid: {}", pid, parent_pid);
+        }
 
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,
         // add the relevant data to the queue
@@ -240,20 +252,20 @@ pub fn unregister_image_load_callback() {
 /// The callback function for image load events (exe, dll)
 ///
 /// # Remarks
-/// This routine will be called by the operating system to notify the driver when a driver image or a user image 
-/// (for example, a DLL or EXE) is mapped into virtual memory. The operating system invokes this routine after an 
+/// This routine will be called by the operating system to notify the driver when a driver image or a user image
+/// (for example, a DLL or EXE) is mapped into virtual memory. The operating system invokes this routine after an
 /// image has been mapped to memory, but before its entrypoint is called.
-/// 
-/// **IMPORTANT NOTE:** The operating system does not call load-image notify routines when sections created with the `SEC_IMAGE_NO_EXECUTE` 
+///
+/// **IMPORTANT NOTE:** The operating system does not call load-image notify routines when sections created with the `SEC_IMAGE_NO_EXECUTE`
 /// attribute are mapped to virtual memory. This shouldn't affect early bird techniques - but WILL need attention in the future
-/// as this attribute could be used in process hollowing etc to avoid detection with our filter callback here. 
-/// 
+/// as this attribute could be used in process hollowing etc to avoid detection with our filter callback here.
+///
 /// todo One way to defeat this once I get round to it would be hooking the NTAPI with our DLL and refusing any attempt to use that
-/// parameter; or we could dynamically change it at runtime. My Ghost Hunting technique should allow us to detect a threat actor 
+/// parameter; or we could dynamically change it at runtime. My Ghost Hunting technique should allow us to detect a threat actor
 /// trying to use direct syscalls etc to bypass the hook.
-/// 
+///
 /// Some links on this:
-/// 
+///
 /// - https://www.secforce.com/blog/dll-hollowing-a-deep-dive-into-a-stealthier-memory-allocation-variant/
 /// - https://www.cyberark.com/resources/threat-research-blog/masking-malicious-memory-artifacts-part-ii-insights-from-moneta
 extern "C" fn image_load_callback(
@@ -325,7 +337,10 @@ extern "C" fn image_load_callback(
     }
 
     // For now, only inject into these processes whilst we test
-    if !(name.contains("notepad.exe") || name.contains("malware.exe") || name.contains("powershell.exe")) {
+    if !(name.contains("notepad.exe")
+        || name.contains("malware.exe")
+        || name.contains("powershell.exe"))
+    {
         return;
     }
 
@@ -346,7 +361,8 @@ extern "C" fn image_load_callback(
         // Tried implementing this now, but as im at POC phase it required quite a bit of a refactor, so i'll do this in the
         // future more likely. Leaving the todo in to work on this later :)
         // The least we can do is make the threat alertable so we aren't starving too many resources.
-        let _ = unsafe { KeDelayExecutionThread(KernelMode as _, TRUE as _, &mut thread_sleep_time) };
+        let _ =
+            unsafe { KeDelayExecutionThread(KernelMode as _, TRUE as _, &mut thread_sleep_time) };
 
         if !ImageLoadQueueForInjector::pid_in_waitlist(pid as usize) {
             println!("[sanctum] [i] DLL injected into PID: {}!", pid as usize);

@@ -9,7 +9,12 @@ use std::{arch::asm, ffi::c_void, thread::sleep, time::Duration};
 use windows::Win32::{
     Foundation::HANDLE,
     System::{
-        Memory::{PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_READWRITE, PAGE_WRITECOMBINE, PAGE_WRITECOPY}, Threading::{GetCurrentProcessId, GetProcessId}, WindowsProgramming::CLIENT_ID
+        Memory::{
+            PAGE_EXECUTE_READWRITE, PAGE_EXECUTE_WRITECOPY, PAGE_READWRITE, PAGE_WRITECOMBINE,
+            PAGE_WRITECOPY,
+        },
+        Threading::{GetCurrentProcessId, GetProcessId},
+        WindowsProgramming::CLIENT_ID,
     },
 };
 
@@ -85,7 +90,10 @@ unsafe extern "system" fn virtual_alloc_ex(
             unsafe { *region_size }
         };
 
-        println!("ntallocvm, addr: {:p}, pid responsible: {}, sz: {}", base_address, remote_pid, region_size_checked);
+        println!(
+            "ntallocvm, addr: {:p}, pid responsible: {}, sz: {}",
+            base_address, remote_pid, region_size_checked
+        );
 
         let data = DLLMessage::SyscallWrapper(Syscall {
             nt_function: NtFunction::NtAllocateVirtualMemory(Some(NtAllocateVirtualMemory {
@@ -141,7 +149,10 @@ unsafe extern "system" fn nt_write_virtual_memory(
     let base_addr_as_usize = base_address as usize;
     let buf_len_as_usize = buf_len as usize;
 
-    println!("[i] Base address as ptr: {:p} to pid: {}", base_address, remote_pid);
+    println!(
+        "[i] Base address as ptr: {:p} to pid: {}",
+        base_address, remote_pid
+    );
 
     // todo inspect buffer for signature of malware
     // todo inspect buffer  for magic bytes + dos header, etc
@@ -202,23 +213,29 @@ pub fn nt_protect_virtual_memory(
     let monitor_from = base_of_ntdll + 372; // account for some weird thing
     let end_of_ntdll: usize = monitor_from + size_of_text_sec;
     if target_end >= monitor_from && target_end <= end_of_ntdll {
-        if new_access_protect & PAGE_EXECUTE_READWRITE.0 == PAGE_EXECUTE_READWRITE.0 || 
-            new_access_protect & PAGE_WRITECOPY.0 == PAGE_WRITECOPY.0 || 
-            new_access_protect & PAGE_WRITECOMBINE.0 == PAGE_WRITECOMBINE.0 || 
-            new_access_protect & PAGE_READWRITE.0 == PAGE_READWRITE.0 || 
-            new_access_protect & PAGE_EXECUTE_WRITECOPY.0 == PAGE_EXECUTE_WRITECOPY.0 {
-                // At this point, we have a few options:
-                // 1 - Suspend threads until the EDR tells us what to do
-                // 2 - Return an error consistent with what we would get from the syscall, maybe access denied, indicating that
-                //      the syscall failed (by returning we do not make the syscall)
-                // 3 - Exit the process
-                // In all cases - the EDR engine should be notified of the event. For demo purposes, this will not be immediately 
-                // implemented.
-                // In this case - we will simply terminate the process.
-                // todo - handle more gracefully in the future.
-                println!("[sanctum] [!] NTDLL tampering detected, attempting to alter memory protections on NTDLL. Base address: {:p}, new protect: {:b}. No bytes: {}", target_base as *const c_void, new_access_protect, unsafe { *no_bytes_to_protect});
-                std::process::exit(0x12345678);
-            }
+        if new_access_protect & PAGE_EXECUTE_READWRITE.0 == PAGE_EXECUTE_READWRITE.0
+            || new_access_protect & PAGE_WRITECOPY.0 == PAGE_WRITECOPY.0
+            || new_access_protect & PAGE_WRITECOMBINE.0 == PAGE_WRITECOMBINE.0
+            || new_access_protect & PAGE_READWRITE.0 == PAGE_READWRITE.0
+            || new_access_protect & PAGE_EXECUTE_WRITECOPY.0 == PAGE_EXECUTE_WRITECOPY.0
+        {
+            // At this point, we have a few options:
+            // 1 - Suspend threads until the EDR tells us what to do
+            // 2 - Return an error consistent with what we would get from the syscall, maybe access denied, indicating that
+            //      the syscall failed (by returning we do not make the syscall)
+            // 3 - Exit the process
+            // In all cases - the EDR engine should be notified of the event. For demo purposes, this will not be immediately
+            // implemented.
+            // In this case - we will simply terminate the process.
+            // todo - handle more gracefully in the future.
+            println!(
+                "[sanctum] [!] NTDLL tampering detected, attempting to alter memory protections on NTDLL. Base address: {:p}, new protect: {:b}. No bytes: {}",
+                target_base as *const c_void,
+                new_access_protect,
+                unsafe { *no_bytes_to_protect }
+            );
+            std::process::exit(0x12345678);
+        }
     }
 
     // proceed with the syscall

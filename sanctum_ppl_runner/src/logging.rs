@@ -1,7 +1,15 @@
 //! A basic event log module to log any errors / events in the Windows Event Log making debugging
 //! easier.
 
-use windows::{core::PCWSTR, Win32::{Foundation::CloseHandle, System::EventLog::{DeregisterEventSource, RegisterEventSourceW, ReportEventW, REPORT_EVENT_TYPE}}};
+use windows::{
+    Win32::{
+        Foundation::CloseHandle,
+        System::EventLog::{
+            DeregisterEventSource, REPORT_EVENT_TYPE, RegisterEventSourceW, ReportEventW,
+        },
+    },
+    core::PCWSTR,
+};
 
 /// A C style enum, event identifiers used in the Event Log to help filter / correlate by dictionary
 #[repr(u32)]
@@ -10,23 +18,23 @@ pub enum EventID {
     Info = 1,
     /// When the service encounters an error in functions related to the running of the service
     GeneralError = 2,
-    /// A process of interest has completed an action caught by the ETW:TI consumer which is of 
+    /// A process of interest has completed an action caught by the ETW:TI consumer which is of
     /// security interest.
     TIGeneralNotification = 3,
-    /// A process of interest has completed an action caught by the ETW:TI consumer which is of 
+    /// A process of interest has completed an action caught by the ETW:TI consumer which is of
     /// security interest.
     ProcessOfInterestTI = 4,
 }
 
 /// Logs an event to the Windows Event Log for the `SanctumPPLRunner` log directory.
-/// 
+///
 /// # Args
 /// - msg: A message you wish to log
 /// - event_type: The event type to log
-/// 
+///
 /// # Errors
-/// If this function encounters an error, it will return with taking no action and thus, could silently 
-/// fail. There is no real abstraction to be had to returning an error from the function; it will either 
+/// If this function encounters an error, it will return with taking no action and thus, could silently
+/// fail. There is no real abstraction to be had to returning an error from the function; it will either
 /// work or it wont, it will not affect the caller.
 pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE, event_id: EventID) {
     // todo consider adding an enum which will exit on error or just return.
@@ -43,11 +51,11 @@ pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE, event_id: EventID) {
     // write the event into the event log
     let _ = unsafe {
         ReportEventW(
-            handle, 
-            event_type, 
+            handle,
+            event_type,
             0,
             event_id as u32, // https://learn.microsoft.com/en-us/windows/win32/eventlog/event-identifiers
-            None, 
+            None,
             0,
             Some([msg_as_pcwstr].as_ref()),
             None, // no binary data
@@ -57,5 +65,4 @@ pub fn event_log(msg: &str, event_type: REPORT_EVENT_TYPE, event_id: EventID) {
     let _ = unsafe { DeregisterEventSource(handle) };
 
     let _ = unsafe { CloseHandle(handle) };
-    
 }

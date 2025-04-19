@@ -86,6 +86,7 @@
         "rustc",
         "SANC",
         "serde",
+        "shellcode",
         "SNAPALL",
         "SNAPTHREAD",
         "SPSVCINST",

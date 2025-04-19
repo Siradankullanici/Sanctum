@@ -3,20 +3,20 @@
 use shared_std::driver_manager::DriverState;
 use std::ptr::null_mut;
 use windows::{
-    core::{Error, PCWSTR},
     Win32::{
         Foundation::{
-            GetLastError, ERROR_DUPLICATE_SERVICE_NAME, ERROR_SERVICE_EXISTS, GENERIC_READ,
-            GENERIC_WRITE,
+            ERROR_DUPLICATE_SERVICE_NAME, ERROR_SERVICE_EXISTS, GENERIC_READ, GENERIC_WRITE,
+            GetLastError,
         },
         Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_NONE, OPEN_EXISTING},
         System::Services::{
             CloseServiceHandle, ControlService, CreateServiceW, DeleteService, OpenSCManagerW,
-            OpenServiceW, StartServiceW, SC_HANDLE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
+            OpenServiceW, SC_HANDLE, SC_MANAGER_ALL_ACCESS, SERVICE_ALL_ACCESS,
             SERVICE_CONTROL_STOP, SERVICE_DEMAND_START, SERVICE_ERROR_NORMAL,
-            SERVICE_KERNEL_DRIVER, SERVICE_STATUS,
+            SERVICE_KERNEL_DRIVER, SERVICE_STATUS, StartServiceW,
         },
     },
+    core::{Error, PCWSTR},
 };
 
 use crate::{
@@ -60,7 +60,10 @@ impl SanctumDriverManager {
             ) {
                 Ok(h) => {
                     if h.is_invalid() {
-                        let msg = format!("Handle returned is invalid when attempting to install the service. Error code: {:?}", GetLastError());
+                        let msg = format!(
+                            "Handle returned is invalid when attempting to install the service. Error code: {:?}",
+                            GetLastError()
+                        );
                         self.update_state_msg(msg);
                     }
 
@@ -179,7 +182,9 @@ impl SanctumDriverManager {
         // check the driver version is compatible with the engine
         if self.ioctl_check_driver_compatibility() == false {
             self.stop_driver(); // ensure a clean shutdown
-            let msg = format!("Driver and client version incompatible. Please ensure you are running the latest version.");
+            let msg = format!(
+                "Driver and client version incompatible. Please ensure you are running the latest version."
+            );
             self.state = DriverState::Stopped(msg);
             return;
         }

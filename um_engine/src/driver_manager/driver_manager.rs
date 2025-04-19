@@ -4,11 +4,11 @@ use shared_no_std::constants::{DRIVER_UM_NAME, SANC_SYS_FILE_LOCATION, SVC_NAME}
 use shared_std::driver_manager::DriverState;
 use std::{os::windows::ffi::OsStrExt, path::PathBuf};
 use windows::{
-    core::PCWSTR,
     Win32::{
         Foundation::{CloseHandle, GetLastError, HANDLE},
         Storage::FileSystem::{GetFileAttributesW, INVALID_FILE_ATTRIBUTES},
     },
+    core::PCWSTR,
 };
 
 use crate::{strings::ToUnicodeString, utils::log::Log};

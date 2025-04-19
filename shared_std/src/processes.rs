@@ -1,8 +1,7 @@
-use std::{rc::Rc, time::SystemTime};
 use serde::{Deserialize, Serialize};
+use std::{rc::Rc, time::SystemTime};
 
-
-/// Bitfields which act as a mask to determine which event types (kernel, syscall hook, etw etc) 
+/// Bitfields which act as a mask to determine which event types (kernel, syscall hook, etw etc)
 /// are required to fully cancel out the ghost hunt timers.
 ///
 /// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
@@ -14,12 +13,11 @@ pub enum SyscallEventSource {
     EventSourceEtw = 0x4,
 }
 
-
 /****************************** GENERAL *******************************/
 
 /// The Process is a structural representation of an individual process thats
 /// running on the host machine, and keeping track of risk scores, and activity conducted
-/// by processes. 
+/// by processes.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Process {
     pub pid: u64,
@@ -35,7 +33,7 @@ pub struct Process {
 
 /// A `GhostHuntingTimer` is the timer metadata associated with the Ghost Hunting technique on my blog:
 /// https://fluxsec.red/edr-syscall-hooking
-/// 
+///
 /// The data contained in this struct allows timers to be polled and detects abuse of direct syscalls / hells gate.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct GhostHuntingTimer {
@@ -43,7 +41,7 @@ pub struct GhostHuntingTimer {
     pub event_type: NtFunction,
     /// todo update docs
     pub origin: SyscallEventSource,
-    /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple 
+    /// Specifies which syscall types of a matching event this is cancellable by. As the EDR monitors multiple
     /// sources of telemetry, we cannot do a 1:1 cancellation process.
     /// todo update docs
     pub cancellable_by: isize,
@@ -60,9 +58,8 @@ pub enum DLLMessage {
 
 /****************************** SYSCALLS *******************************/
 
-
 /// Information relating to a syscall event which happened on the device. This struct holds:
-/// 
+///
 /// - `data`: This field is generic over T which must implement the `HasPid` trait. This field contains the metadata associated
 /// with the syscall.
 /// - `source`: Where the system event was captured, e.g. a hooked syscall, ETW, or the driver.
@@ -106,9 +103,9 @@ pub struct NtAllocateVirtualMemory {
     pub base_address: usize,
     /// THe size of the allocated memory
     pub region_size: usize,
-    /// A bitmask containing flags that specify the type of allocation to be performed. 
+    /// A bitmask containing flags that specify the type of allocation to be performed.
     pub allocation_type: u32,
-    /// A bitmask containing page protection flags that specify the protection desired for the committed 
+    /// A bitmask containing page protection flags that specify the protection desired for the committed
     /// region of pages.
     pub protect: u32,
     /// The pid in which the allocation is taking place in

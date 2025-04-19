@@ -33,13 +33,17 @@ use core::{
     threads::{set_thread_creation_callback, thread_callback},
 };
 use device_comms::{
-    ioctl_check_driver_compatibility, ioctl_get_image_load_len, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex
+    DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_get_image_load_len,
+    ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping,
+    ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland,
 };
 use ffi::IoGetCurrentIrpStackLocation;
 use shared_no_std::{
     constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
     ioctl::{
-        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
+        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
+        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
     },
 };
 use utils::{Log, LogLevel};
@@ -401,7 +405,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_PING_WITH_STRUCT => {
             if let Err(e) = ioctl_handler_ping_return_struct(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -409,7 +413,7 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_CHECK_COMPATIBILITY => {
             if let Err(e) = ioctl_check_driver_compatibility(p_stack_location, pirp) {
                 println!("[sanctum] [-] Error: {e}");
@@ -417,35 +421,35 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_MESSAGE_LEN => {
             if let Err(_) = ioctl_handler_get_kernel_msg_len(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_MESSAGES => {
             if let Err(_) = ioctl_handler_send_kernel_msgs_to_userland(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN => {
             if let Err(_) = ioctl_get_image_load_len(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
         SANC_IOCTL_DRIVER_GET_IMAGE_LOADS => {
             if let Err(_) = ioctl_handler_get_image_loads(pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS
             }
-        },
+        }
 
         _ => {
             println!(

@@ -1,24 +1,24 @@
 #![feature(naked_functions)]
 
 use integrity::start_ntdll_integrity_monitor;
-use threads::{resume_all_threads, suspend_all_threads};
 use std::collections::BTreeMap;
 use std::ffi::c_void;
 use stubs::nt_protect_virtual_memory;
+use threads::{resume_all_threads, suspend_all_threads};
 use windows::core::s;
 use windows::{
-    core::PCSTR,
     Win32::{
         Foundation::{GetLastError, STATUS_SUCCESS},
         System::{
             Diagnostics::Debug::FlushInstructionCache,
             LibraryLoader::{GetModuleHandleA, GetProcAddress},
-            Memory::{VirtualProtect, PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS},
+            Memory::{PAGE_EXECUTE_READWRITE, PAGE_PROTECTION_FLAGS, VirtualProtect},
             SystemServices::*,
             Threading::{CreateThread, GetCurrentProcess, THREAD_CREATION_FLAGS},
         },
-        UI::WindowsAndMessaging::{MessageBoxA, MB_OK},
+        UI::WindowsAndMessaging::{MB_OK, MessageBoxA},
     },
+    core::PCSTR,
 };
 
 mod integrity;
@@ -295,9 +295,9 @@ impl<'a> StubAddresses<'a> {
 /// 3) Write the jmp instruction
 #[unsafe(no_mangle)]
 fn patch_ntdll(addresses: &StubAddresses) {
-    // Iterate over each item in the BTreeMap, and for each, hook the syscall stub. 
+    // Iterate over each item in the BTreeMap, and for each, hook the syscall stub.
     // We use a BTreeMap so we can have a predictive ordering to the order in which
-    // we will iterate over them, or more specifically, we can control the last iteration, 
+    // we will iterate over them, or more specifically, we can control the last iteration,
     // which should be modifying NtProtectVirtualMemory.
     for (_, item) in &addresses.addresses {
         let buffer: &[u8] = &[
