@@ -25,7 +25,7 @@ use alloc::{
 };
 use core::{
     etw_mon::monitor_kernel_etw,
-    processes::{
+    process_callbacks::{
         ProcessHandleCallback, process_create_callback, register_image_load_callback,
         unregister_image_load_callback,
     },
