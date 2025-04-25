@@ -1,6 +1,6 @@
 //! Stubs that act as callback functions from syscalls.
 
-use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
+use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine, SYSCALL_NUMBER};
 use shared_std::processes::{
     DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
     Syscall, SyscallEventSource,
@@ -42,8 +42,7 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    // todo automate the syscall number so not hardcoded
-    let ssn = 0x26; // give the compiler awareness of rax
+    let ssn = SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
 
     unsafe {
         asm!(
@@ -112,7 +111,8 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = 0x18;
+    let ssn = SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").unwrap();
+
     unsafe {
         asm!(
             "sub rsp, 0x38",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
@@ -171,7 +171,8 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = 0x3a;
+    let ssn = SYSCALL_NUMBER.get("NtWriteVirtualMemory").unwrap();
+
     unsafe {
         asm!(
             "sub rsp, 0x30",
@@ -239,7 +240,8 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = 0x50;
+    let ssn = SYSCALL_NUMBER.get("NtProtectVirtualMemory").unwrap();
+
     unsafe {
         asm!(
             "sub rsp, 0x30",
