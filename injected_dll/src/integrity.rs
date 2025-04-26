@@ -9,15 +9,14 @@ use std::{
 use md5::{Digest, Md5};
 use shared_std::processes::DLLMessage;
 use windows::{
-    Win32::{
+    core::s, Win32::{
         Foundation::HANDLE,
         System::{
             Diagnostics::Debug::{IMAGE_NT_HEADERS64, IMAGE_SECTION_HEADER},
             LibraryLoader::GetModuleHandleA,
-            SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE},
+            SystemServices::{IMAGE_DOS_HEADER, IMAGE_DOS_SIGNATURE}, Threading::{CreateThread, THREAD_CREATION_FLAGS},
         },
-    },
-    core::s,
+    }
 };
 
 use crate::{ipc::send_ipc_to_engine, threads::suspend_all_threads};
@@ -35,9 +34,24 @@ pub fn start_ntdll_integrity_monitor() {
     let hash = hash_ntdll_text_segment(&ntdll_info);
     ntdll_info.hash = hash;
 
-    let _ = std::thread::spawn(|| {
-        periodically_check_ntdll_hash(ntdll_info);
-    });
+    let p_ntdll_info = Box::into_raw(Box::new(ntdll_info));
+    unsafe { CreateThread(
+        None, 
+        0, 
+        Some(native_wrapper_worker_thread),
+        Some(p_ntdll_info as _), 
+        THREAD_CREATION_FLAGS(0), 
+        None,
+    )}.expect("unable to create native thread for ntdll monitoring");
+}
+
+unsafe extern "system" fn native_wrapper_worker_thread(param: *mut c_void) -> u32 {
+    if param.is_null() {
+        panic!("[-] Param for native_wrapper_worker_thread was null.");
+    }
+
+    let ntdll_info = * unsafe { Box::from_raw(param as *mut NtdllIntegrity) };
+    periodically_check_ntdll_hash(ntdll_info);
 }
 
 /// The core mappings of NTDLL so that it can be monitored for changes via a hash value
