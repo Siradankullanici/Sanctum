@@ -1,6 +1,6 @@
 //! Stubs that act as callback functions from syscalls.
 
-use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
+use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine, SYSCALL_NUMBER};
 use shared_std::processes::{
     DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
     Syscall, SyscallEventSource,
@@ -42,8 +42,7 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    // todo automate the syscall number so not hardcoded
-    let ssn = 0x26; // give the compiler awareness of rax
+    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").expect("failed to find function hook for ZwOpenProcess");
 
     unsafe {
         asm!(
@@ -72,6 +71,7 @@ unsafe extern "system" fn virtual_alloc_ex(
     allocation_type: u32,
     protect: u32,
 ) {
+
     //
     // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in
     // self allocations - we can deal with that later. We just want remote process memory allocations for the time being.
@@ -112,7 +112,8 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = 0x18;
+    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").expect("failed to find function hook for ZwAllocateVirtualMemory");
+
     unsafe {
         asm!(
             "sub rsp, 0x38",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
@@ -149,11 +150,6 @@ unsafe extern "system" fn nt_write_virtual_memory(
     let base_addr_as_usize = base_address as usize;
     let buf_len_as_usize = buf_len as usize;
 
-    println!(
-        "[i] Base address as ptr: {:p} to pid: {}",
-        base_address, remote_pid
-    );
-
     // todo inspect buffer for signature of malware
     // todo inspect buffer  for magic bytes + dos header, etc
 
@@ -171,7 +167,8 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = 0x3a;
+    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").expect("failed to find function hook for NtWriteVirtualMemory");
+
     unsafe {
         asm!(
             "sub rsp, 0x30",
@@ -239,7 +236,8 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = 0x50;
+    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").expect("failed to find function hook for NtProtectVirtualMemory");
+
     unsafe {
         asm!(
             "sub rsp, 0x30",

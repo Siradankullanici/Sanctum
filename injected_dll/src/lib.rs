@@ -3,6 +3,8 @@
 use integrity::start_ntdll_integrity_monitor;
 use std::collections::BTreeMap;
 use std::ffi::c_void;
+use std::mem;
+use std::sync::LazyLock;
 use stubs::nt_protect_virtual_memory;
 use threads::{resume_all_threads, suspend_all_threads};
 use windows::core::s;
@@ -295,6 +297,15 @@ impl<'a> StubAddresses<'a> {
 /// 3) Write the jmp instruction
 #[unsafe(no_mangle)]
 fn patch_ntdll(addresses: &StubAddresses) {
+    // Before we patch NTDLL, we need to initialise the LazyLock, this is a patch following a PR from 
+    // https://github.com/lzty where the author has created a static containing the SSN's for the hooked
+    // syscalls. This led to a bug in that it was trying to read memory after the NTDLL patching by the EDR
+    // DLL had taken place, so was reading now invalid memory. If we now try access an SSN, and do a check
+    // that it doesn't return None via `unwrap()`, we can ensure the SSN's are properly initialised before the 
+    // DLL's thread has chance to start overwriting and in some cases nullifying memory.
+    SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
+
+
     // Iterate over each item in the BTreeMap, and for each, hook the syscall stub.
     // We use a BTreeMap so we can have a predictive ordering to the order in which
     // we will iterate over them, or more specifically, we can control the last iteration,
@@ -399,3 +410,55 @@ fn patch_ntdll(addresses: &StubAddresses) {
         panic!("[-] Could not flush instruction cache. {e}"); // todo should not panic
     }
 }
+
+/// Automated syscall number repository
+pub static SYSCALL_NUMBER: LazyLock<BTreeMap<&'static str, u32>> = LazyLock::new(|| {
+    let mut syscall_num_repo = BTreeMap::new();
+
+    static NT_FUNC_NAMES: [&str; 4] = [
+        "ZwOpenProcess\0",
+        "ZwAllocateVirtualMemory\0",
+        "NtWriteVirtualMemory\0",
+        "NtProtectVirtualMemory\0",
+    ];
+
+    if let Ok(h_ntdll) = unsafe { GetModuleHandleA(s!("Ntdll.dll")) } {
+        for name in NT_FUNC_NAMES {
+            if let Some(ntfunc) = unsafe { GetProcAddress(h_ntdll, PCSTR::from_raw(name.as_ptr())) }
+            {
+                let funcaddr = unsafe { mem::transmute::<_, *const u8>(ntfunc) };
+
+                #[cfg(target_arch = "x86_64")]
+                {
+                    if unsafe { (funcaddr as *const u32).read_unaligned() } == 0xb8d18b4c {
+                        let num = (unsafe { (funcaddr as *const u64).read_unaligned() } >> 32)
+                            as u32
+                            & 0xfff;
+                        
+                        // eliminate the last trailing '\0' to make a normal rust str
+                        syscall_num_repo.insert(&name[0..name.len() - 1], num);
+                    }
+                }
+
+                #[cfg(target_arch = "x86")]
+                {
+                    if unsafe { funcaddr.read_unaligned() } == 0xb8 {
+                        let num = unsafe {
+                            ((funcaddr as *const u64).add(1) as *const u32).read_unaligned()
+                        } & 0xfff;
+
+                        syscall_num_repo.insert(&name[0..name.len() - 1], num);
+                    }
+                }
+            } else {
+                println!("[-] Could not find function");
+            }
+        }
+    }
+
+    if syscall_num_repo.len() != NT_FUNC_NAMES.len() {
+        panic!("[-] Could not resolve all required SSN's. {:?}", syscall_num_repo);
+    }
+
+    syscall_num_repo
+});
