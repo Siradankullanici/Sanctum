@@ -42,7 +42,7 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    let ssn = SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
 
     unsafe {
         asm!(
@@ -71,6 +71,7 @@ unsafe extern "system" fn virtual_alloc_ex(
     allocation_type: u32,
     protect: u32,
 ) {
+
     //
     // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in
     // self allocations - we can deal with that later. We just want remote process memory allocations for the time being.
@@ -111,7 +112,7 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").unwrap();
 
     unsafe {
         asm!(
@@ -149,11 +150,6 @@ unsafe extern "system" fn nt_write_virtual_memory(
     let base_addr_as_usize = base_address as usize;
     let buf_len_as_usize = buf_len as usize;
 
-    println!(
-        "[i] Base address as ptr: {:p} to pid: {}",
-        base_address, remote_pid
-    );
-
     // todo inspect buffer for signature of malware
     // todo inspect buffer  for magic bytes + dos header, etc
 
@@ -171,7 +167,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = SYSCALL_NUMBER.get("NtWriteVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").unwrap();
 
     unsafe {
         asm!(
@@ -240,7 +236,7 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = SYSCALL_NUMBER.get("NtProtectVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").unwrap();
 
     unsafe {
         asm!(
