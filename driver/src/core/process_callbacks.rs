@@ -95,7 +95,10 @@ pub unsafe extern "C" fn process_create_callback(
         };
 
         if process_started.image_name.contains("otepad") {
-            println!("[sanctum] [i] Notepad created, pid: {}, ppid: {}", pid, parent_pid);
+            println!(
+                "[sanctum] [i] Notepad created, pid: {}, ppid: {}",
+                pid, parent_pid
+            );
         }
 
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,
