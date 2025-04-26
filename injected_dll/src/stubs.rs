@@ -42,7 +42,7 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").expect("failed to find function hook for ZwOpenProcess");
 
     unsafe {
         asm!(
@@ -112,7 +112,7 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").expect("failed to find function hook for ZwAllocateVirtualMemory");
 
     unsafe {
         asm!(
@@ -167,7 +167,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").expect("failed to find function hook for NtWriteVirtualMemory");
 
     unsafe {
         asm!(
@@ -236,7 +236,7 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").unwrap();
+    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").expect("failed to find function hook for NtProtectVirtualMemory");
 
     unsafe {
         asm!(
