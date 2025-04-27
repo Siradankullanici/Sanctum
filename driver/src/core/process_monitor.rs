@@ -209,7 +209,7 @@ impl ProcessMonitor {
         }
     }
 
-    pub fn handle_dll_syscall_event(data: &DLLMessage) {
+    pub fn handle_syscall_event(data: &DLLMessage) {
         println!("[sanctum] [i] DLL data: {:?}", data);
 
         match data {

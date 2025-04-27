@@ -634,7 +634,7 @@ pub fn ioctl_dll_hook_syscall(
     // SAFETY: Pointer validity checked above
     let input_data: &DLLMessage = unsafe { &*input_data };
 
-    ProcessMonitor::handle_dll_syscall_event(input_data);
+    ProcessMonitor::handle_syscall_event(input_data);
 
     Ok(())
 }

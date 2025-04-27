@@ -86,7 +86,7 @@ impl Core {
                 // let mut lock = self.process_monitor.write().await;
                 // lock.ghost_hunt_add_event(rx.clone());
                 let mut mtx = driver_manager.lock().await;
-                mtx.ioctl_dll_syscall(rx);
+                mtx.ioctl_syscall_event(rx);
             }
 
             // Check for events from the ETW listener
