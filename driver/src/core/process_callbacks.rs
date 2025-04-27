@@ -27,8 +27,7 @@ use wdk_sys::{
 };
 
 use crate::{
-    DRIVER_MESSAGES, REGISTRATION_HANDLE, device_comms::ImageLoadQueueForInjector,
-    utils::unicode_to_string,
+    core::process_monitor::ProcessMonitor, device_comms::ImageLoadQueueForInjector, utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE
 };
 
 /// Callback function for a new process being created on the system.
@@ -99,6 +98,13 @@ pub unsafe extern "C" fn process_create_callback(
                 "[sanctum] [i] Notepad created, pid: {}, ppid: {}",
                 pid, parent_pid
             );
+
+            if let Err(e) = ProcessMonitor::onboard_new_process(process_started.pid) {
+                println!("[sanctum] [-] Error onboarding new process to PM. {:?}", e)
+            };
+
+            ProcessMonitor::ghost_hunt_add_event(process_started.pid);
+            println!("[sanctum] [i] Ghost hunt added!");
         }
 
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,

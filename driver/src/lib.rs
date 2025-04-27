@@ -24,13 +24,9 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    etw_mon::monitor_kernel_etw,
-    process_callbacks::{
-        ProcessHandleCallback, process_create_callback, register_image_load_callback,
-        unregister_image_load_callback,
-    },
-    registry::{enable_registry_monitoring, unregister_registry_monitor},
-    threads::{set_thread_creation_callback, thread_callback},
+    etw_mon::monitor_kernel_etw, process_callbacks::{
+        process_create_callback, register_image_load_callback, unregister_image_load_callback, ProcessHandleCallback
+    }, process_monitor::ProcessMonitor, registry::{enable_registry_monitoring, unregister_registry_monitor}, threads::{set_thread_creation_callback, thread_callback}
 };
 use device_comms::{
     DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_get_image_load_len,
@@ -222,6 +218,11 @@ pub unsafe extern "C" fn configure_driver(
     set_thread_creation_callback();
 
     // Process image loads
+    if let Err(e) = ProcessMonitor::new() {
+        println!("[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting", e);
+        return STATUS_UNSUCCESSFUL;
+    }
+
     let status = register_image_load_callback();
     if !nt_success(status) {
         println!("[sanctum] [-] Could not start PsSetLoadImageNotifyRoutine. Status: {status}");
