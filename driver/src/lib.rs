@@ -24,18 +24,28 @@ use alloc::{
     vec::Vec,
 };
 use core::{
-    etw_mon::monitor_kernel_etw, process_callbacks::{
-        process_create_callback, register_image_load_callback, unregister_image_load_callback, ProcessHandleCallback
-    }, process_monitor::ProcessMonitor, registry::{enable_registry_monitoring, unregister_registry_monitor}, threads::{set_thread_creation_callback, thread_callback}
+    etw_mon::monitor_kernel_etw,
+    process_callbacks::{
+        ProcessHandleCallback, process_create_callback, register_image_load_callback,
+        unregister_image_load_callback,
+    },
+    process_monitor::ProcessMonitor,
+    registry::{enable_registry_monitoring, unregister_registry_monitor},
+    threads::{set_thread_creation_callback, thread_callback},
 };
 use device_comms::{
-    ioctl_check_driver_compatibility, ioctl_dll_hook_syscall, ioctl_get_image_load_len, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex
+    DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_dll_hook_syscall,
+    ioctl_get_image_load_len, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len,
+    ioctl_handler_ping, ioctl_handler_ping_return_struct,
+    ioctl_handler_send_kernel_msgs_to_userland,
 };
 use ffi::IoGetCurrentIrpStackLocation;
 use shared_no_std::{
     constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
     ioctl::{
-        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DLL_SYSCALL, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DLL_SYSCALL, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
+        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
+        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
     },
 };
 use utils::{Log, LogLevel};
@@ -169,17 +179,6 @@ pub unsafe extern "C" fn configure_driver(
         return res;
     }
 
-    // store a global pointer to the device object
-    // AP_DEVICE_OBJECT.store(device_object, Ordering::Relaxed);
-
-    // let device_extension = (*device_object).DeviceExtension as *mut DeviceContext;
-    // (*device_extension) = DeviceContext {
-    //     log_file_mutex: KMutex::new(0u32).unwrap(),
-    // };
-
-    // // store the device context in the global
-    // DRIVER_CONTEXT_PTR.store((*device_object).DeviceExtension as *mut _, Ordering::Relaxed);
-
     //
     // Create the symbolic link
     //
@@ -215,9 +214,14 @@ pub unsafe extern "C" fn configure_driver(
 
     // Process image loads
     if let Err(e) = ProcessMonitor::new() {
-        println!("[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting", e);
+        println!(
+            "[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting",
+            e
+        );
         return STATUS_UNSUCCESSFUL;
     }
+
+    ProcessMonitor::start_ghost_hunt_monitor();
 
     let status = register_image_load_callback();
     if !nt_success(status) {
@@ -318,13 +322,29 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     // Thread cleanup
     //
 
-    if let Ok(terminate_etw_thread) = Grt::get_fast_mutex("TERMINATION_FLAG_ETW_MONITOR") {
+    terminate_thread_from_grt_str("TERMINATION_FLAG_ETW_MONITOR", "ETW_THREAD_HANDLE");
+    terminate_thread_from_grt_str("TERMINATION_FLAG_GH_MONITOR", "GH_THREAD_HANDLE");
+
+    if let Err(e) = unsafe { Grt::destroy() } {
+        println!("Error destroying: {:?}", e);
+    }
+
+    // delete the device
+    unsafe {
+        IoDeleteDevice((*driver).DeviceObject);
+    }
+
+    println!("[sanctum] driver unloaded successfully...");
+}
+
+fn terminate_thread_from_grt_str(flag_str: &'static str, ob_str: &'static str) {
+    if let Ok(terminate_etw_thread) = Grt::get_fast_mutex(flag_str) {
         let mut lock = terminate_etw_thread.lock().unwrap();
         *lock = true;
     }
     {
         let thread_handle_grt: Result<&FastMutex<*mut c_void>, wdk_mutex::errors::GrtError> =
-            Grt::get_fast_mutex("ETW_THREAD_HANDLE");
+            Grt::get_fast_mutex(ob_str);
         if let Ok(thread_handle_grt) = thread_handle_grt {
             let thread_handle = thread_handle_grt.lock().unwrap();
 
@@ -348,17 +368,6 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
             }
         }
     }
-
-    if let Err(e) = unsafe { Grt::destroy() } {
-        println!("Error destroying: {:?}", e);
-    }
-
-    // delete the device
-    unsafe {
-        IoDeleteDevice((*driver).DeviceObject);
-    }
-
-    println!("[sanctum] driver unloaded successfully...");
 }
 
 unsafe extern "C" fn sanctum_create_close(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NTSTATUS {

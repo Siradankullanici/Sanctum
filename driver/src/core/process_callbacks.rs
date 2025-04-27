@@ -27,7 +27,8 @@ use wdk_sys::{
 };
 
 use crate::{
-    core::process_monitor::ProcessMonitor, device_comms::ImageLoadQueueForInjector, utils::unicode_to_string, DRIVER_MESSAGES, REGISTRATION_HANDLE
+    DRIVER_MESSAGES, REGISTRATION_HANDLE, core::process_monitor::ProcessMonitor,
+    device_comms::ImageLoadQueueForInjector, utils::unicode_to_string,
 };
 
 /// Callback function for a new process being created on the system.
@@ -93,7 +94,9 @@ pub unsafe extern "C" fn process_create_callback(
             pid,
         };
 
-        if process_started.image_name.contains("otepad") || process_started.image_name.contains("alware.ex") {
+        if process_started.image_name.contains("otepad")
+            || process_started.image_name.contains("alware.ex")
+        {
             println!(
                 "[sanctum] [i] Notepad created, pid: {}, ppid: {}",
                 pid, parent_pid

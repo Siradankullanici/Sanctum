@@ -1,11 +1,16 @@
 use core::{ffi::c_void, mem, ptr::null_mut, slice::from_raw_parts, sync::atomic::Ordering};
 
 use crate::{
-    core::process_monitor::ProcessMonitor, utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE
+    DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
+    core::process_monitor::ProcessMonitor,
+    utils::{DriverError, Log, check_driver_version},
 };
 use alloc::{format, string::String};
 use shared_no_std::{
-    constants::SanctumVersion, driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated}, ghost_hunting::{DLLMessage, Syscall}, ioctl::{DriverMessages, SancIoctlPing}
+    constants::SanctumVersion,
+    driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
+    ghost_hunting::{DLLMessage, Syscall},
+    ioctl::{DriverMessages, SancIoctlPing},
 };
 use wdk::println;
 use wdk_mutex::{
@@ -13,7 +18,9 @@ use wdk_mutex::{
     grt::Grt,
 };
 use wdk_sys::{
-    ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION
+    _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
+    STATUS_INVALID_BUFFER_SIZE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
+    ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal},
 };
 
 /// DriverMessagesWithMutex object which contains a spinlock to allow for mutable access to the queue.
@@ -636,7 +643,7 @@ pub fn ioctl_dll_hook_syscall(
         Err(e) => {
             println!("Failed to parse JSON from user: {:?}", e);
             return Err(STATUS_INVALID_PARAMETER);
-        },
+        }
     };
 
     ProcessMonitor::handle_syscall_ghost_hunt_event(&input_data);
