@@ -639,7 +639,7 @@ pub fn ioctl_dll_hook_syscall(
         },
     };
 
-    ProcessMonitor::handle_dll_message_event(&input_data);
+    ProcessMonitor::handle_syscall_ghost_hunt_event(&input_data);
 
     Ok(())
 }

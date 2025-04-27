@@ -209,26 +209,9 @@ impl ProcessMonitor {
         }
     }
 
-    pub fn handle_dll_message_event(data: &Syscall) {
-        println!("[sanctum] [i] DLL data: {:?}", data);
-
+    pub fn handle_syscall_ghost_hunt_event(data: &Syscall) {
+        println!("[sanctum] [i] Syscall ghost hunt data: {:?}", data);
         ProcessMonitor::ghost_hunt_add_event(data.pid, data.clone());
-
-        // match data {
-        //     DLLMessage::SyscallWrapper(syscall) => {
-        //         let syscall = syscall.clone();
-        //         // This arm represents a syscall having come legitimately through our ntdll hook
-        //         ProcessMonitor::ghost_hunt_add_event(
-        //             syscall.pid, 
-        //             syscall,
-        //         );
-        //     },
-        //     DLLMessage::NtdllOverwrite => {
-        //         // This arm is bad; means something has tried to overwrite ntdll!
-        //         println!("[sanctum] [-] Not yet implemented (NtdllOverwrite)");
-        //         todo!()
-        //     },
-        // }
     }
 
     fn get_mtx_inner<'a>() -> FastMutexGuard<'a, BTreeMap::<u64, Process>> {
