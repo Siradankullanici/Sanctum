@@ -1718,6 +1718,7 @@ dependencies = [
  "md-5",
  "serde",
  "serde_json",
+ "shared_no_std",
  "shared_std",
  "windows 0.61.1",
 ]
@@ -3054,6 +3055,7 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+ "shared_no_std",
  "shared_std",
  "windows 0.61.1",
 ]

@@ -297,14 +297,13 @@ impl<'a> StubAddresses<'a> {
 /// 3) Write the jmp instruction
 #[unsafe(no_mangle)]
 fn patch_ntdll(addresses: &StubAddresses) {
-    // Before we patch NTDLL, we need to initialise the LazyLock, this is a patch following a PR from 
+    // Before we patch NTDLL, we need to initialise the LazyLock, this is a patch following a PR from
     // https://github.com/lzty where the author has created a static containing the SSN's for the hooked
     // syscalls. This led to a bug in that it was trying to read memory after the NTDLL patching by the EDR
     // DLL had taken place, so was reading now invalid memory. If we now try access an SSN, and do a check
-    // that it doesn't return None via `unwrap()`, we can ensure the SSN's are properly initialised before the 
+    // that it doesn't return None via `unwrap()`, we can ensure the SSN's are properly initialised before the
     // DLL's thread has chance to start overwriting and in some cases nullifying memory.
     SYSCALL_NUMBER.get("ZwOpenProcess").unwrap();
-
 
     // Iterate over each item in the BTreeMap, and for each, hook the syscall stub.
     // We use a BTreeMap so we can have a predictive ordering to the order in which
@@ -434,7 +433,7 @@ pub static SYSCALL_NUMBER: LazyLock<BTreeMap<&'static str, u32>> = LazyLock::new
                         let num = (unsafe { (funcaddr as *const u64).read_unaligned() } >> 32)
                             as u32
                             & 0xfff;
-                        
+
                         // eliminate the last trailing '\0' to make a normal rust str
                         syscall_num_repo.insert(&name[0..name.len() - 1], num);
                     }
@@ -457,7 +456,10 @@ pub static SYSCALL_NUMBER: LazyLock<BTreeMap<&'static str, u32>> = LazyLock::new
     }
 
     if syscall_num_repo.len() != NT_FUNC_NAMES.len() {
-        panic!("[-] Could not resolve all required SSN's. {:?}", syscall_num_repo);
+        panic!(
+            "[-] Could not resolve all required SSN's. {:?}",
+            syscall_num_repo
+        );
     }
 
     syscall_num_repo

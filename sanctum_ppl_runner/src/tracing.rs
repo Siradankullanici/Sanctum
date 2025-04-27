@@ -6,7 +6,7 @@ use crate::{
     ipc::send_etw_info_ipc,
     logging::{EventID, event_log},
 };
-use shared_std::processes::{NtAllocateVirtualMemory, NtFunction, Syscall};
+use shared_no_std::ghost_hunting::{NtFunction, Syscall};
 use windows::{
     Win32::{
         Foundation::{ERROR_SUCCESS, GetLastError, MAX_PATH, STATUS_SUCCESS},
@@ -310,7 +310,7 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
                 EventID::ProcessOfInterestTI,
             );
             send_etw_info_ipc(Syscall::new_etw(
-                pid,
+                pid as u64,
                 NtFunction::NtAllocateVirtualMemory(None),
                 60,
             ));
@@ -352,7 +352,7 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
                 EventID::ProcessOfInterestTI,
             );
             send_etw_info_ipc(Syscall::new_etw(
-                pid,
+                pid as u64,
                 NtFunction::NtWriteVirtualMemory(None),
                 60,
             ));
@@ -362,7 +362,7 @@ unsafe extern "system" fn trace_callback(record: *mut EVENT_RECORD) {
             == KERNEL_THREATINT_KEYWORD_WRITEVM_REMOTE
         {
             send_etw_info_ipc(Syscall::new_etw(
-                pid,
+                pid as u64,
                 NtFunction::NtWriteVirtualMemory(None),
                 60,
             ));

@@ -5,9 +5,8 @@ use crate::{
     utils::log::{Log, LogLevel},
 };
 use serde_json::from_slice;
-use shared_std::{
-    constants::PIPE_FOR_ETW, processes::Syscall, security::create_security_attributes,
-};
+use shared_no_std::ghost_hunting::Syscall;
+use shared_std::{constants::PIPE_FOR_ETW, security::create_security_attributes};
 use std::{
     os::windows::io::{AsHandle, AsRawHandle},
     sync::Arc,

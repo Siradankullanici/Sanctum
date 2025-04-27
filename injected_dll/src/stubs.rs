@@ -1,7 +1,7 @@
 //! Stubs that act as callback functions from syscalls.
 
-use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine, SYSCALL_NUMBER};
-use shared_std::processes::{
+use crate::{SYSCALL_NUMBER, integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
+use shared_no_std::ghost_hunting::{
     DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
     Syscall, SyscallEventSource,
 };
@@ -33,7 +33,7 @@ unsafe extern "system" fn open_process(
 
         let data = DLLMessage::SyscallWrapper(Syscall {
             nt_function: NtFunction::NtOpenProcess(Some(NtOpenProcessData { target_pid })),
-            pid,
+            pid: pid as u64,
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 30,
         });
@@ -42,7 +42,9 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").expect("failed to find function hook for ZwOpenProcess");
+    let ssn = *SYSCALL_NUMBER
+        .get("ZwOpenProcess")
+        .expect("failed to find function hook for ZwOpenProcess");
 
     unsafe {
         asm!(
@@ -71,7 +73,6 @@ unsafe extern "system" fn virtual_alloc_ex(
     allocation_type: u32,
     protect: u32,
 ) {
-
     //
     // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in
     // self allocations - we can deal with that later. We just want remote process memory allocations for the time being.
@@ -91,7 +92,7 @@ unsafe extern "system" fn virtual_alloc_ex(
         };
 
         println!(
-            "ntallocvm, addr: {:p}, pid responsible: {}, sz: {}",
+            "[hook] [i] ntallocvm, addr: {:p}, pid responsible: {}, sz: {}",
             base_address, remote_pid, region_size_checked
         );
 
@@ -103,7 +104,7 @@ unsafe extern "system" fn virtual_alloc_ex(
                 protect,
                 remote_pid,
             })),
-            pid,
+            pid: pid as u64,
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 60,
         });
@@ -112,26 +113,33 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").expect("failed to find function hook for ZwAllocateVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("ZwAllocateVirtualMemory")
+        .expect("[hook] failed to find function hook for ZwAllocateVirtualMemory");
 
+    let mut result: u32 = 999;
     unsafe {
         asm!(
-            "sub rsp, 0x38",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
+            "sub rsp, 0x30",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
             "mov [rsp + 0x30], {1}",    // 8 byte ptr + 32 byte shadow space + 8 bytes offset from 5th arg
             "mov [rsp + 0x28], {0}",    // 8 byte ptr + 32 byte shadow space
             "mov r10, rcx",
             "syscall",
-            "add rsp, 0x38",
+            "add rsp, 0x30",
 
             in(reg) allocation_type,
             in(reg) protect,
-            in("rax") ssn,
+            inout("rax") ssn => result,
             in("rcx") process_handle.0,
             in("rdx") base_address,
             in("r8") zero_bits,
             in("r9") region_size,
             options(nostack),
         );
+
+        if result != 0 {
+            println!("[hook] [i] Result of ntallocvm: {result}")
+        }
     }
 }
 
@@ -159,7 +167,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
             base_address: base_addr_as_usize,
             buf_len: buf_len_as_usize,
         })),
-        pid,
+        pid: pid as u64,
         source: SyscallEventSource::EventSourceSyscallHook,
         evasion_weight: 60,
     };
@@ -167,7 +175,9 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").expect("failed to find function hook for NtWriteVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("NtWriteVirtualMemory")
+        .expect("failed to find function hook for NtWriteVirtualMemory");
 
     unsafe {
         asm!(
@@ -236,7 +246,9 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").expect("failed to find function hook for NtProtectVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("NtProtectVirtualMemory")
+        .expect("failed to find function hook for NtProtectVirtualMemory");
 
     unsafe {
         asm!(

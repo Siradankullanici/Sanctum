@@ -316,7 +316,8 @@ unsafe extern "C" fn thread_run_monitor_etw(_: *mut c_void) {
     };
 
     loop {
-        let _ = KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut thread_sleep_time);
+        let _ =
+            unsafe { KeDelayExecutionThread(KernelMode as _, FALSE as _, &mut thread_sleep_time) };
 
         // Check if we have received the cancellation flag, without this check we will get a BSOD. This flag will be
         // set to true on DriverExit.

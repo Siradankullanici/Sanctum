@@ -1,13 +1,15 @@
-use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
+use core::{ffi::c_void, mem, ptr::null_mut, slice::from_raw_parts, sync::atomic::Ordering};
 
 use crate::{
     DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
+    core::process_monitor::ProcessMonitor,
     utils::{DriverError, Log, check_driver_version},
 };
 use alloc::{format, string::String};
 use shared_no_std::{
     constants::SanctumVersion,
     driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
+    ghost_hunting::{DLLMessage, Syscall},
     ioctl::{DriverMessages, SancIoctlPing},
 };
 use wdk::println;
@@ -17,7 +19,7 @@ use wdk_mutex::{
 };
 use wdk_sys::{
     _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
-    STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
+    STATUS_INVALID_BUFFER_SIZE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
     ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal},
 };
 
@@ -620,6 +622,35 @@ pub fn ioctl_check_driver_compatibility(
     Ok(())
 }
 
+// todo docs
+pub fn ioctl_dll_hook_syscall(
+    p_stack_location: *mut _IO_STACK_LOCATION,
+    pirp: PIRP,
+) -> Result<(), NTSTATUS> {
+    let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
+    ioctl_buffer.receive()?; // receive the data
+
+    let input_data = ioctl_buffer.buf as *const _ as *const u8;
+    if input_data.is_null() {
+        println!("[sanctum] [-] Error receiving input data for checking driver compatibility.");
+        return Err(STATUS_UNSUCCESSFUL);
+    }
+
+    // SAFETY: Pointer validity checked above
+    let input_data = unsafe { from_raw_parts(input_data, ioctl_buffer.len as usize) };
+    let input_data: Syscall = match serde_json::from_slice(&input_data) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("Failed to parse JSON from user: {:?}", e);
+            return Err(STATUS_INVALID_PARAMETER);
+        }
+    };
+
+    ProcessMonitor::handle_syscall_ghost_hunt_event(&input_data);
+
+    Ok(())
+}
+
 #[derive(Debug)]
 enum ImageLoadQueueSelector {
     Cache,
@@ -854,11 +885,7 @@ impl ImageLoadQueueForInjector {
             return None;
         }
 
-        println!("[sanctum] [i] Live queue was not empty. {:?}", *lock);
-
         let mut dup = mem::take(&mut *lock);
-
-        println!("Lock after clear: {:?}, dup: {:?}", *lock, dup);
 
         // If we drained the live queue, we need to add this to the cache
         match queue_type {

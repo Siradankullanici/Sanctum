@@ -1,7 +1,8 @@
 use std::{fs::OpenOptions, io::Write, thread::sleep, time::Duration};
 
 use serde_json::to_vec;
-use shared_std::{constants::PIPE_FOR_INJECTED_DLL, processes::DLLMessage};
+use shared_no_std::ghost_hunting::DLLMessage;
+use shared_std::constants::PIPE_FOR_INJECTED_DLL;
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
 pub fn send_ipc_to_engine(data: DLLMessage) {

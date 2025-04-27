@@ -158,7 +158,7 @@ fn monitor_etw_delete_key(object: *mut c_void) -> Result<NTSTATUS, ()> {
     // Free the resource as the kernel allocated this string
     unsafe { CmCallbackReleaseKeyObjectIDEx(p_registry_path) };
 
-    println!("Key name: {}", name);
+    // println!("Key name: {}", name);
 
     // Disallow edits to keys related to ETW as we want them in tact for the EDR & security.
     if is_modifying_etw_keys(name) {
