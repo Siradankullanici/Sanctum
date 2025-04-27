@@ -89,7 +89,7 @@ unsafe extern "system" fn virtual_alloc_ex(
         };
 
         println!(
-            "ntallocvm, addr: {:p}, pid responsible: {}, sz: {}",
+            "[hook] [i] ntallocvm, addr: {:p}, pid responsible: {}, sz: {}",
             base_address, remote_pid, region_size_checked
         );
 
@@ -112,26 +112,31 @@ unsafe extern "system" fn virtual_alloc_ex(
     // proceed with the syscall
     let ssn = *SYSCALL_NUMBER
         .get("ZwAllocateVirtualMemory")
-        .expect("failed to find function hook for ZwAllocateVirtualMemory");
+        .expect("[hook] failed to find function hook for ZwAllocateVirtualMemory");
 
+    let mut result: u32 = 999;
     unsafe {
         asm!(
-            "sub rsp, 0x38",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
+            "sub rsp, 0x30",            // reserve shadow space + 8 byte ptr as it expects a stack of that size
             "mov [rsp + 0x30], {1}",    // 8 byte ptr + 32 byte shadow space + 8 bytes offset from 5th arg
             "mov [rsp + 0x28], {0}",    // 8 byte ptr + 32 byte shadow space
             "mov r10, rcx",
             "syscall",
-            "add rsp, 0x38",
+            "add rsp, 0x30",
 
             in(reg) allocation_type,
             in(reg) protect,
-            in("rax") ssn,
+            inout("rax") ssn => result,
             in("rcx") process_handle.0,
             in("rdx") base_address,
             in("r8") zero_bits,
             in("r9") region_size,
             options(nostack),
         );
+
+        if result != 0 {
+            println!("[hook] [i] Result of ntallocvm: {result}")
+        }
     }
 }
 
