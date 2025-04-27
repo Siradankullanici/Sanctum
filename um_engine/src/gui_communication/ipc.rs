@@ -269,11 +269,13 @@ pub async fn handle_ipc(
         // Processes page in driver
         //
         "process_query_pid" => {
-            return Some(to_value(CommandResponse {
-                status: "error".to_string(),
-                message: "Invalid PID received".to_string(),
-            })
-            .unwrap());
+            return Some(
+                to_value(CommandResponse {
+                    status: "error".to_string(),
+                    message: "Invalid PID received".to_string(),
+                })
+                .unwrap(),
+            );
 
             // if let Some(args) = request.args {
             //     let pid: String = serde_json::from_value(args).unwrap();

@@ -3,10 +3,7 @@
 
 use serde_json::from_slice;
 use shared_no_std::ghost_hunting::{DLLMessage, Syscall};
-use shared_std::{
-    constants::PIPE_FOR_INJECTED_DLL,
-    security::create_security_attributes,
-};
+use shared_std::{constants::PIPE_FOR_INJECTED_DLL, security::create_security_attributes};
 use std::{
     os::windows::io::{AsHandle, AsRawHandle},
     sync::Arc,

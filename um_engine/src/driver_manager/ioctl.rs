@@ -417,7 +417,7 @@ impl SanctumDriverManager {
     }
 
     /// Sends an IOCTL to the driver to notify that a 'Ghost Hunting' syscall event has taken place.
-    /// 
+    ///
     /// This can originate from a DLL or ETW.
     pub fn ioctl_syscall_event(&mut self, syscall: Syscall) {
         //

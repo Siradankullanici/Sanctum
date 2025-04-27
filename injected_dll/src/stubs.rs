@@ -1,8 +1,11 @@
 //! Stubs that act as callback functions from syscalls.
 
 use crate::{SYSCALL_NUMBER, integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
+use shared_no_std::ghost_hunting::{
+    DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
+    Syscall, SyscallEventSource,
+};
 use std::{arch::asm, ffi::c_void, thread::sleep, time::Duration};
-use shared_no_std::ghost_hunting::{DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
 use windows::Win32::{
     Foundation::HANDLE,
     System::{

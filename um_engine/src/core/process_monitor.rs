@@ -1,7 +1,15 @@
 use std::ffi::c_void;
 
 use shared_no_std::constants::SANCTUM_DLL_RELATIVE_PATH;
-use windows::{core::s, Win32::System::{Diagnostics::Debug::WriteProcessMemory, LibraryLoader::{GetModuleHandleA, GetProcAddress}, Memory::{VirtualAllocEx, MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE}, Threading::{CreateRemoteThread, OpenProcess, PROCESS_VM_OPERATION, PROCESS_VM_WRITE}}};
+use windows::{
+    Win32::System::{
+        Diagnostics::Debug::WriteProcessMemory,
+        LibraryLoader::{GetModuleHandleA, GetProcAddress},
+        Memory::{MEM_COMMIT, MEM_RESERVE, PAGE_EXECUTE_READWRITE, VirtualAllocEx},
+        Threading::{CreateRemoteThread, OpenProcess, PROCESS_VM_OPERATION, PROCESS_VM_WRITE},
+    },
+    core::s,
+};
 
 use crate::utils::env::get_logged_in_username;
 

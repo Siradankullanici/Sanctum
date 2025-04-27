@@ -8,14 +8,11 @@ use crate::{
     utils::log::{Log, LogLevel},
 };
 
-use super::{
-    ipc_etw_consumer::run_ipc_for_etw,
-    ipc_injected_dll::run_ipc_for_injected_dll,
-};
+use super::{ipc_etw_consumer::run_ipc_for_etw, ipc_injected_dll::run_ipc_for_injected_dll};
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates
 /// with the kernel.
-/// 
+///
 /// Note, this module no longer does `Ghost Hunting`, this is done by the driver.
 ///
 /// # Components
