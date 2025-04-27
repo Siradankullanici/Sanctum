@@ -1,10 +1,6 @@
 use std::sync::Arc;
 
-use shared_no_std::ghost_hunting::Syscall;
-use tokio::{
-    sync::{Mutex, RwLock, mpsc},
-    time::sleep,
-};
+use tokio::sync::{Mutex, mpsc};
 
 use crate::{
     core::process_monitor::inject_edr_dll,
@@ -19,6 +15,8 @@ use super::{
 
 /// The core struct contains information on the core of the usermode engine where decisions are being made, and directly communicates
 /// with the kernel.
+/// 
+/// Note, this module no longer does `Ghost Hunting`, this is done by the driver.
 ///
 /// # Components
 ///
@@ -105,60 +103,10 @@ impl Core {
                 mtx.ioctl_get_image_loads_for_injecting_sanc_dll()
             };
 
-            //
             // If we have new message(s) / emissions from the driver or injected DLL, process them as appropriate
-            //
             if driver_response.is_some() {
                 // first deal with process terminations to prevent trying to add to an old process id if there is a duplicate
                 let mut driver_messages = driver_response.unwrap();
-                // let process_terminations = driver_messages.process_terminations;
-                // if !process_terminations.is_empty() {
-                //     for t in process_terminations {
-                //         self.process_monitor
-                //             .write()
-                //             .await
-                //             .remove_process(t.pid)
-                //             .await;
-                //     }
-                // }
-
-                // add a new process to the running process hashmap
-                // let process_creations = driver_messages.process_creations;
-                // if !process_creations.is_empty() {
-                //     for p in process_creations {
-                //         if self
-                //             .process_monitor
-                //             .write()
-                //             .await
-                //             .onboard_new_process(&p)
-                //             .await
-                //             .is_err()
-                //         {
-                //             logger.log(
-                //                 LogLevel::Error,
-                //                 &format!(
-                //                     "Failed to add new process to live processes. Process: {:?}",
-                //                     p
-                //                 ),
-                //             );
-                //         }
-                //     }
-                // }
-
-                // process all handles
-                // if !driver_messages.handles.is_empty() {
-                //     for item in driver_messages.handles {
-                //         self.process_monitor
-                //             .write()
-                //             .await
-                //             .add_handle_driver_notified(
-                //                 item.source_pid,
-                //                 item.dest_pid,
-                //                 item.rights_given,
-                //                 item.rights_desired,
-                //             );
-                //     }
-                // }
 
                 // cache messages
                 {
@@ -167,21 +115,6 @@ impl Core {
                         message_cache.append(&mut driver_messages.messages);
                     }
                 }
-
-                //
-                // Perform checks of process timers for Ghost Hunting
-                // What is Ghost Hunting? https://fluxsec.red/edr-syscall-hooking
-                //
-                // self.process_monitor.write().await.poll_ghost_timer();
-
-                /*
-                    todo long term:
-                        - thread creation
-                        - change of handle type (e.g. trying to evade detection)
-                        - is the process doing bad things itself (allocating foreign mem)
-
-                    ^ to the abv hashmap
-                */
             }
 
             if let Some(image_loads) = image_loads {
