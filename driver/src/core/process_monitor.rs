@@ -5,6 +5,7 @@ use core::time::Duration;
 
 use alloc::{collections::btree_map::BTreeMap, string::String, vec::Vec};
 use serde::{Deserialize, Serialize};
+use shared_no_std::{driver_ipc::ProcessStarted, ghost_hunting::{DLLMessage, NtFunction, Syscall, SyscallEventSource}};
 use wdk::println;
 use wdk_mutex::{errors::GrtError, fast_mutex::FastMutexGuard, grt::Grt, kmutex::KMutex};
 use wdk_sys::{ntddk::KeQuerySystemTimePrecise, LARGE_INTEGER};
@@ -13,6 +14,8 @@ use wdk_sys::{ntddk::KeQuerySystemTimePrecise, LARGE_INTEGER};
 /// onto it, can be tracked and monitored.
 pub struct Process {
     pid: u64,
+    /// Parent pid
+    ppid: u64,
     pub process_image: String,
     pub commandline_args: String,
     pub risk_score: u16,
@@ -26,18 +29,6 @@ pub struct Process {
 // todo
 #[derive(Debug, Default)]
 pub struct ProcessTargetedApis {}
-
-/// Bitfields which act as a mask to determine which event types (kernel, syscall hook, etw etc)
-/// are required to fully cancel out the ghost hunt timers.
-///
-/// This is because not all events are capturable in the kernel without tampering with patch guard etc, so there are some events
-/// only able to be caught by ETW and the syscall hook.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, Eq, PartialEq)]
-pub enum SyscallEventSource {
-    EventSourceKernel = 0x1,
-    EventSourceSyscallHook = 0x2,
-    EventSourceEtw = 0x4,
-}
 
 /// A `GhostHuntingTimer` is the timer metadata associated with the Ghost Hunting technique on my blog:
 /// https://fluxsec.red/edr-syscall-hooking
@@ -76,45 +67,6 @@ pub enum ProcessErrors {
     FailedToOpenProcess,
 }
 
-/// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub enum NtFunction {
-    NtOpenProcess(Option<NtOpenProcessData>),
-    NtWriteVirtualMemory(Option<NtWriteVirtualMemoryData>),
-    NtAllocateVirtualMemory(Option<NtAllocateVirtualMemory>),
-}
-
-/// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct NtOpenProcessData {
-    pub target_pid: u64,
-}
-
-/// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct NtWriteVirtualMemoryData {
-    pub target_pid: u64,
-    pub base_address: usize,
-    pub buf_len: usize,
-}
-
-/// todo docs
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
-pub struct NtAllocateVirtualMemory {
-    /// The base address is the base of the remote process which is stored as a usize but is actually a hex
-    /// address and will need converting if using as an address.
-    pub base_address: usize,
-    /// THe size of the allocated memory
-    pub region_size: usize,
-    /// A bitmask containing flags that specify the type of allocation to be performed.
-    pub allocation_type: u32,
-    /// A bitmask containing page protection flags that specify the protection desired for the committed
-    /// region of pages.
-    pub protect: u32,
-    /// The pid in which the allocation is taking place in
-    pub remote_pid: u64,
-}
-
 impl ProcessMonitor {
     /// Instantiates a new `ProcessMonitor`; which is just an interface for access to the underlying 
     /// globally managed mutex via `Grt` (my `wdk-mutex` crate).
@@ -127,18 +79,19 @@ impl ProcessMonitor {
         Grt::register_fast_mutex("ProcessMonitor", BTreeMap::<u64, Process>::new())
     }
 
-    pub fn onboard_new_process(pid: u64) -> Result<(), ProcessErrors> {
+    pub fn onboard_new_process(process: &ProcessStarted) -> Result<(), ProcessErrors> {
         let mut process_lock = ProcessMonitor::get_mtx_inner();
 
-        if process_lock.get(&pid).is_some() {
+        if process_lock.get(&process.pid).is_some() {
             return Err(ProcessErrors::DuplicatePid);
         }
 
         // todo this actually needs filling out with the relevant data
-        process_lock.insert(pid, Process {
-            pid,
-            process_image: String::new(),
-            commandline_args: String::new(),
+        process_lock.insert(process.pid, Process {
+            pid: process.pid,
+            ppid: process.parent_pid,
+            process_image: process.image_name.clone(),
+            commandline_args: process.command_line.clone(),
             risk_score: 0,
             allow_listed: false,
             ghost_hunting_timers: Vec::new(),
@@ -153,7 +106,11 @@ impl ProcessMonitor {
         process_lock.remove(&pid);
     }
 
-    pub fn ghost_hunt_add_event(pid: u64) {
+    /// Notifies the Ghost Hunting management that a new huntable event has occurred.
+    pub fn ghost_hunt_add_event(
+        pid: u64,
+        signal: Syscall,
+    ) {
         let mut process_lock = ProcessMonitor::get_mtx_inner();
 
         if let Some(process) = process_lock.get_mut(&pid) {
@@ -162,10 +119,10 @@ impl ProcessMonitor {
 
             process.add_ghost_hunt_timer(GhostHuntingTimer { 
                 timer_start: current_time, 
-                event_type: NtFunction::NtAllocateVirtualMemory(None),
-                origin: SyscallEventSource::EventSourceKernel,
-                cancellable_by: 1, 
-                weight: 50,
+                cancellable_by: signal.nt_function.find_cancellable_apis_ghost_hunting(),
+                event_type: signal.nt_function,
+                origin: signal.source,
+                weight: signal.evasion_weight,
             });
         }
     }
@@ -199,7 +156,7 @@ impl ProcessMonitor {
             // todo add to a struct somewhere
             let max_time_allowed = Duration::from_secs(3);
             let max_time_allowed = LARGE_INTEGER {
-                QuadPart: -((max_time_allowed.as_nanos() / 100) as i64),
+                QuadPart: ((max_time_allowed.as_nanos() / 100) as i64),
             };
 
             let mut index: usize = 0; // index of iterator over the ghost timers
@@ -214,7 +171,7 @@ impl ProcessMonitor {
                 let time_delta = unsafe { current_time.QuadPart - item.timer_start.QuadPart };
 
                 if time_delta > unsafe { max_time_allowed.QuadPart } {
-                    println!("[sanctum] [i] Time delta greater than inner! {}", time_delta);
+                    println!("[sanctum] [i] Time delta greater than inner! delta: {}, current {}, item: {}, max: {}", time_delta, unsafe {current_time.QuadPart}, unsafe { item.timer_start.QuadPart}, unsafe { max_time_allowed.QuadPart } );
                 } else {
                     println!("[sanctum] [i] Time delta smaller than inner! {}", time_delta);
                 }
@@ -252,6 +209,26 @@ impl ProcessMonitor {
         }
     }
 
+    pub fn handle_dll_syscall_event(data: &DLLMessage) {
+        println!("[sanctum] [i] DLL data: {:?}", data);
+
+        match data {
+            DLLMessage::SyscallWrapper(syscall) => {
+                let syscall = syscall.clone();
+                // This arm represents a syscall having come legitimately through our ntdll hook
+                ProcessMonitor::ghost_hunt_add_event(
+                    syscall.pid, 
+                    syscall,
+                );
+            },
+            DLLMessage::NtdllOverwrite => {
+                // This arm is bad; means something has tried to overwrite ntdll!
+                println!("[sanctum] [-] Not yet implemented (NtdllOverwrite)");
+                todo!()
+            },
+        }
+    }
+
     fn get_mtx_inner<'a>() -> FastMutexGuard<'a, BTreeMap::<u64, Process>> {
         // todo rather than panic, ? error
         let process_lock: FastMutexGuard<BTreeMap::<u64, Process>> = match Grt::get_fast_mutex("ProcessMonitor") {
@@ -274,11 +251,56 @@ impl ProcessMonitor {
     }
 }
 
+/// Remove an event source from a given Ghost Hunting timer.
+///
+/// This function will modify the timer object to remove a cancellable event origin in place.
+///
+/// # Args
+/// - `timer`: A mutable reference to the GhostHuntingTimer for a given process
+#[inline(always)]
+fn unset_event_flag_in_timer(timer: &mut GhostHuntingTimer) {
+    timer.cancellable_by = timer.cancellable_by as isize ^ timer.origin as isize;
+    // flip the set bit back to a 0
+}
+
 impl Process {
     fn add_ghost_hunt_timer(
         &mut self,
-        origin: GhostHuntingTimer,
+        mut timer: GhostHuntingTimer,
     ) {
-        self.ghost_hunting_timers.push(origin);
+        // If the timers are empty; then its the first in so we can add it to the list straight up.
+        if self.ghost_hunting_timers.is_empty() {
+            // remove the current notification from the cancellable by (prevent dangling timers)
+            unset_event_flag_in_timer(&mut timer);
+            self.ghost_hunting_timers.push(timer);
+            return;
+        }
+
+        // Otherwise, there is data in the ghost hunting timers ...
+        for (index, timer_iter) in self.ghost_hunting_timers.iter_mut().enumerate() {
+            // If the API Origin that this fn relates to is found in the list of cancellable APIs then cancel them out.
+            // Part of the core Ghost Hunting logic. First though we need to check that the event type that can cancel it out
+            // is present in the active flags (bugs were happening where other events of the same type were being XOR'ed, so if they
+            // were previously unset, the flag  was being reset and the process was therefore failing).
+            // To get around this we do a bitwise& check before running the XOR in unset_event_flag_in_timer.
+            if core::mem::discriminant(&timer_iter.event_type) == core::mem::discriminant(&timer.event_type) {
+                if timer_iter.cancellable_by & timer.origin as isize == timer.origin as isize {
+                    unset_event_flag_in_timer(timer_iter);
+
+                    // If everything is cancelled out (aka all bit fields set to 0 remove the timer completely from the process)
+                    if timer_iter.cancellable_by == 0 {
+                        self.ghost_hunting_timers.remove(index);
+                        return;
+                    }
+
+                    return;
+                }
+            }
+        }
+
+        // we did not match on the above timer.event_type in the list of active timers, so add the element as a new timer
+        // remove the current notification from the cancellable by (prevent dangling timers)
+        unset_event_flag_in_timer(&mut timer);
+        self.ghost_hunting_timers.push(timer);
     }
 }

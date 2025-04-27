@@ -7,11 +7,12 @@ use core::str;
 use shared_no_std::{
     constants::VERSION_CLIENT,
     driver_ipc::ImageLoadQueues,
+    ghost_hunting::Syscall,
     ioctl::{
-        DriverMessages, SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
-        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
-        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
-        SancIoctlPing,
+        DriverMessages, SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DLL_SYSCALL,
+        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN,
+        SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING,
+        SANC_IOCTL_PING_WITH_STRUCT, SancIoctlPing,
     },
 };
 use std::{ffi::c_void, slice::from_raw_parts};
@@ -413,5 +414,40 @@ impl SanctumDriverManager {
                 std::str::from_utf8(constructed)
             ),
         );
+    }
+
+    /// Ping the driver from usermode
+    pub fn ioctl_dll_syscall(&mut self, syscall: Syscall) {
+        //
+        // Check the handle to the driver is valid, if not, attempt to initialise it.
+        //
+
+        // todo improve how the error handling happens..
+        if self.handle_via_path.handle.is_none() {
+            // try 1 more time
+            self.init_handle_via_registry();
+            if self.handle_via_path.handle.is_none() {
+                println!("[-] Error getting driver handle to send syscall ioctl from dll");
+                return;
+            }
+        }
+
+        let message = serde_json::to_vec(&syscall).expect("could not serialise Syscall to vector");
+
+        // attempt the call
+        if let Err(e) = unsafe {
+            DeviceIoControl(
+                self.handle_via_path.handle.unwrap(),
+                SANC_IOCTL_DLL_SYSCALL,
+                Some(message.as_ptr() as *const _),
+                message.len() as u32,
+                None,
+                0,
+                None,
+                None,
+            )
+        } {
+            println!("[-] Failed to send IOCTL for DLL syscall event. {:?}", e);
+        }
     }
 }

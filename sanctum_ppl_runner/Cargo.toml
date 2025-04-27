@@ -24,4 +24,5 @@ windows = {version = "0", features = [
 ]}
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }
 shared_std ={ path = "../shared_std"}
+shared_no_std ={ path = "../shared_no_std"}
 serde = { version = "1.0", features = ["derive"] }

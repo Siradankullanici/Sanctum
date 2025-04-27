@@ -1,11 +1,8 @@
 //! Stubs that act as callback functions from syscalls.
 
-use crate::{integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine, SYSCALL_NUMBER};
-use shared_std::processes::{
-    DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData,
-    Syscall, SyscallEventSource,
-};
+use crate::{SYSCALL_NUMBER, integrity::get_base_and_sz_ntdll, ipc::send_ipc_to_engine};
 use std::{arch::asm, ffi::c_void, thread::sleep, time::Duration};
+use shared_no_std::ghost_hunting::{DLLMessage, NtAllocateVirtualMemory, NtFunction, NtOpenProcessData, NtWriteVirtualMemoryData, Syscall, SyscallEventSource};
 use windows::Win32::{
     Foundation::HANDLE,
     System::{
@@ -33,7 +30,7 @@ unsafe extern "system" fn open_process(
 
         let data = DLLMessage::SyscallWrapper(Syscall {
             nt_function: NtFunction::NtOpenProcess(Some(NtOpenProcessData { target_pid })),
-            pid,
+            pid: pid as u64,
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 30,
         });
@@ -42,7 +39,9 @@ unsafe extern "system" fn open_process(
         send_ipc_to_engine(data);
     }
 
-    let ssn = *SYSCALL_NUMBER.get("ZwOpenProcess").expect("failed to find function hook for ZwOpenProcess");
+    let ssn = *SYSCALL_NUMBER
+        .get("ZwOpenProcess")
+        .expect("failed to find function hook for ZwOpenProcess");
 
     unsafe {
         asm!(
@@ -71,7 +70,6 @@ unsafe extern "system" fn virtual_alloc_ex(
     allocation_type: u32,
     protect: u32,
 ) {
-
     //
     // Check whether we are allocating memory in our own process, or a remote process. For now, we are not interested in
     // self allocations - we can deal with that later. We just want remote process memory allocations for the time being.
@@ -103,7 +101,7 @@ unsafe extern "system" fn virtual_alloc_ex(
                 protect,
                 remote_pid,
             })),
-            pid,
+            pid: pid as u64,
             source: SyscallEventSource::EventSourceSyscallHook,
             evasion_weight: 60,
         });
@@ -112,7 +110,9 @@ unsafe extern "system" fn virtual_alloc_ex(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("ZwAllocateVirtualMemory").expect("failed to find function hook for ZwAllocateVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("ZwAllocateVirtualMemory")
+        .expect("failed to find function hook for ZwAllocateVirtualMemory");
 
     unsafe {
         asm!(
@@ -159,7 +159,7 @@ unsafe extern "system" fn nt_write_virtual_memory(
             base_address: base_addr_as_usize,
             buf_len: buf_len_as_usize,
         })),
-        pid,
+        pid: pid as u64,
         source: SyscallEventSource::EventSourceSyscallHook,
         evasion_weight: 60,
     };
@@ -167,7 +167,9 @@ unsafe extern "system" fn nt_write_virtual_memory(
     send_ipc_to_engine(DLLMessage::SyscallWrapper(data));
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtWriteVirtualMemory").expect("failed to find function hook for NtWriteVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("NtWriteVirtualMemory")
+        .expect("failed to find function hook for NtWriteVirtualMemory");
 
     unsafe {
         asm!(
@@ -236,7 +238,9 @@ pub fn nt_protect_virtual_memory(
     }
 
     // proceed with the syscall
-    let ssn = *SYSCALL_NUMBER.get("NtProtectVirtualMemory").expect("failed to find function hook for NtProtectVirtualMemory");
+    let ssn = *SYSCALL_NUMBER
+        .get("NtProtectVirtualMemory")
+        .expect("failed to find function hook for NtProtectVirtualMemory");
 
     unsafe {
         asm!(

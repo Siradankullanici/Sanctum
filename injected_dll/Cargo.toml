@@ -20,6 +20,7 @@ windows = { version = "0", features = [
     "Win32_System_ProcessStatus",
     "Win32_System_SystemInformation",
 ] }
+shared_no_std = { path = "../shared_no_std" }
 shared_std = { path = "../shared_std" }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = { version = "1.0", default-features = false, features = ["alloc"] }

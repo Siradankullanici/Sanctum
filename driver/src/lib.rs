@@ -29,17 +29,13 @@ use core::{
     }, process_monitor::ProcessMonitor, registry::{enable_registry_monitoring, unregister_registry_monitor}, threads::{set_thread_creation_callback, thread_callback}
 };
 use device_comms::{
-    DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_get_image_load_len,
-    ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping,
-    ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland,
+    ioctl_check_driver_compatibility, ioctl_dll_hook_syscall, ioctl_get_image_load_len, ioctl_handler_get_image_loads, ioctl_handler_get_kernel_msg_len, ioctl_handler_ping, ioctl_handler_ping_return_struct, ioctl_handler_send_kernel_msgs_to_userland, DriverMessagesWithMutex
 };
 use ffi::IoGetCurrentIrpStackLocation;
 use shared_no_std::{
     constants::{DOS_DEVICE_NAME, NT_DEVICE_NAME, VERSION_DRIVER},
     ioctl::{
-        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS,
-        SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN,
-        SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT,
+        SANC_IOCTL_CHECK_COMPATIBILITY, SANC_IOCTL_DLL_SYSCALL, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS, SANC_IOCTL_DRIVER_GET_IMAGE_LOADS_LEN, SANC_IOCTL_DRIVER_GET_MESSAGES, SANC_IOCTL_DRIVER_GET_MESSAGE_LEN, SANC_IOCTL_PING, SANC_IOCTL_PING_WITH_STRUCT
     },
 };
 use utils::{Log, LogLevel};
@@ -446,6 +442,13 @@ unsafe extern "C" fn handle_ioctl(_device: *mut DEVICE_OBJECT, pirp: PIRP) -> NT
         }
         SANC_IOCTL_DRIVER_GET_IMAGE_LOADS => {
             if let Err(_) = ioctl_handler_get_image_loads(pirp) {
+                STATUS_UNSUCCESSFUL
+            } else {
+                STATUS_SUCCESS
+            }
+        }
+        SANC_IOCTL_DLL_SYSCALL => {
+            if let Err(_) = ioctl_dll_hook_syscall(p_stack_location, pirp) {
                 STATUS_UNSUCCESSFUL
             } else {
                 STATUS_SUCCESS

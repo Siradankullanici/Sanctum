@@ -93,18 +93,15 @@ pub unsafe extern "C" fn process_create_callback(
             pid,
         };
 
-        if process_started.image_name.contains("otepad") {
+        if process_started.image_name.contains("otepad") || process_started.image_name.contains("alware.ex") {
             println!(
                 "[sanctum] [i] Notepad created, pid: {}, ppid: {}",
                 pid, parent_pid
             );
 
-            if let Err(e) = ProcessMonitor::onboard_new_process(process_started.pid) {
+            if let Err(e) = ProcessMonitor::onboard_new_process(&process_started) {
                 println!("[sanctum] [-] Error onboarding new process to PM. {:?}", e)
             };
-
-            ProcessMonitor::ghost_hunt_add_event(process_started.pid);
-            println!("[sanctum] [i] Ghost hunt added!");
         }
 
         // Attempt to dereference the DRIVER_MESSAGES global; if the dereference is successful,

@@ -3,7 +3,8 @@
 use std::{fs::OpenOptions, io::Write, thread::sleep, time::Duration};
 
 use serde_json::to_vec;
-use shared_std::{constants::PIPE_FOR_ETW, processes::Syscall};
+use shared_no_std::ghost_hunting::Syscall;
+use shared_std::constants::PIPE_FOR_ETW;
 use windows::Win32::Foundation::ERROR_PIPE_BUSY;
 
 pub fn send_etw_info_ipc(data: Syscall) {

@@ -2,9 +2,9 @@
 //! with the engine, and this module provides the functionality for this.
 
 use serde_json::from_slice;
+use shared_no_std::ghost_hunting::{DLLMessage, Syscall};
 use shared_std::{
     constants::PIPE_FOR_INJECTED_DLL,
-    processes::{DLLMessage, Syscall},
     security::create_security_attributes,
 };
 use std::{
@@ -99,7 +99,7 @@ pub async fn run_ipc_for_injected_dll(tx: Sender<Syscall>) {
                                                 todo!()
                                             }
                                         };
-                                        if pipe_pid != syscall.pid {
+                                        if pipe_pid as u64 != syscall.pid {
                                             // todo this is bad and should do something
                                             eprintln!("!!!!!!!!!!! PIDS DONT MATCH!");
                                         }

@@ -1,14 +1,11 @@
 use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
 
 use crate::{
-    DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE,
-    utils::{DriverError, Log, check_driver_version},
+    core::process_monitor::ProcessMonitor, utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE
 };
 use alloc::{format, string::String};
 use shared_no_std::{
-    constants::SanctumVersion,
-    driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated},
-    ioctl::{DriverMessages, SancIoctlPing},
+    constants::SanctumVersion, driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated}, ghost_hunting::DLLMessage, ioctl::{DriverMessages, SancIoctlPing}
 };
 use wdk::println;
 use wdk_mutex::{
@@ -620,6 +617,28 @@ pub fn ioctl_check_driver_compatibility(
     Ok(())
 }
 
+// todo docs
+pub fn ioctl_dll_hook_syscall(
+    p_stack_location: *mut _IO_STACK_LOCATION,
+    pirp: PIRP,
+) -> Result<(), NTSTATUS> {
+    let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
+    ioctl_buffer.receive()?; // receive the data
+
+    let input_data = ioctl_buffer.buf as *const _ as *const DLLMessage;
+    if input_data.is_null() {
+        println!("[sanctum] [-] Error receiving input data for checking driver compatibility.");
+        return Err(STATUS_UNSUCCESSFUL);
+    }
+
+    // SAFETY: Pointer validity checked above
+    let input_data: &DLLMessage = unsafe { &*input_data };
+
+    ProcessMonitor::handle_dll_syscall_event(input_data);
+
+    Ok(())
+}
+
 #[derive(Debug)]
 enum ImageLoadQueueSelector {
     Cache,
@@ -854,11 +873,7 @@ impl ImageLoadQueueForInjector {
             return None;
         }
 
-        println!("[sanctum] [i] Live queue was not empty. {:?}", *lock);
-
         let mut dup = mem::take(&mut *lock);
-
-        println!("Lock after clear: {:?}, dup: {:?}", *lock, dup);
 
         // If we drained the live queue, we need to add this to the cache
         match queue_type {
