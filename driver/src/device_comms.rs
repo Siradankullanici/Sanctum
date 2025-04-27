@@ -1,11 +1,11 @@
-use core::{ffi::c_void, mem, ptr::null_mut, sync::atomic::Ordering};
+use core::{ffi::c_void, mem, ptr::null_mut, slice::from_raw_parts, sync::atomic::Ordering};
 
 use crate::{
     core::process_monitor::ProcessMonitor, utils::{check_driver_version, DriverError, Log}, DRIVER_MESSAGES, DRIVER_MESSAGES_CACHE
 };
 use alloc::{format, string::String};
 use shared_no_std::{
-    constants::SanctumVersion, driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated}, ghost_hunting::DLLMessage, ioctl::{DriverMessages, SancIoctlPing}
+    constants::SanctumVersion, driver_ipc::{HandleObtained, ImageLoadQueues, ProcessStarted, ProcessTerminated}, ghost_hunting::{DLLMessage, Syscall}, ioctl::{DriverMessages, SancIoctlPing}
 };
 use wdk::println;
 use wdk_mutex::{
@@ -13,9 +13,7 @@ use wdk_mutex::{
     grt::Grt,
 };
 use wdk_sys::{
-    _IO_STACK_LOCATION, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS,
-    STATUS_INVALID_BUFFER_SIZE, STATUS_SUCCESS, STATUS_UNSUCCESSFUL,
-    ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal},
+    ntddk::{KeGetCurrentIrql, RtlCopyMemoryNonTemporal}, APC_LEVEL, NTSTATUS, PIRP, STATUS_BUFFER_ALL_ZEROS, STATUS_INVALID_BUFFER_SIZE, STATUS_INVALID_PARAMETER, STATUS_SUCCESS, STATUS_UNSUCCESSFUL, _IO_STACK_LOCATION
 };
 
 /// DriverMessagesWithMutex object which contains a spinlock to allow for mutable access to the queue.
@@ -625,16 +623,23 @@ pub fn ioctl_dll_hook_syscall(
     let mut ioctl_buffer = IoctlBuffer::new(p_stack_location, pirp);
     ioctl_buffer.receive()?; // receive the data
 
-    let input_data = ioctl_buffer.buf as *const _ as *const DLLMessage;
+    let input_data = ioctl_buffer.buf as *const _ as *const u8;
     if input_data.is_null() {
         println!("[sanctum] [-] Error receiving input data for checking driver compatibility.");
         return Err(STATUS_UNSUCCESSFUL);
     }
 
     // SAFETY: Pointer validity checked above
-    let input_data: &DLLMessage = unsafe { &*input_data };
+    let input_data = unsafe { from_raw_parts(input_data, ioctl_buffer.len as usize) };
+    let input_data: Syscall = match serde_json::from_slice(&input_data) {
+        Ok(d) => d,
+        Err(e) => {
+            println!("Failed to parse JSON from user: {:?}", e);
+            return Err(STATUS_INVALID_PARAMETER);
+        },
+    };
 
-    ProcessMonitor::handle_syscall_event(input_data);
+    ProcessMonitor::handle_dll_message_event(&input_data);
 
     Ok(())
 }

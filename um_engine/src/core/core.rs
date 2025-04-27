@@ -83,16 +83,14 @@ impl Core {
         loop {
             // See if there is a message from the injected DLL
             if let Ok(rx) = rx.try_recv() {
-                // let mut lock = self.process_monitor.write().await;
-                // lock.ghost_hunt_add_event(rx.clone());
                 let mut mtx = driver_manager.lock().await;
                 mtx.ioctl_syscall_event(rx);
             }
 
             // Check for events from the ETW listener
             if let Ok(rx) = rx_etw.try_recv() {
-                // let mut lock = self.process_monitor.write().await;
-                // lock.ghost_hunt_add_event(rx);
+                let mut mtx = driver_manager.lock().await;
+                mtx.ioctl_syscall_event(rx);
             }
 
             // contact the driver and get any messages from the kernel
