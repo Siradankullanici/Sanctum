@@ -3,7 +3,7 @@
 //! The `process_monitor` module implements a Windows-kernel driver component
 //! that tracks process lifecycles and applies “ghost-hunting” heuristics to detect
 //! syscall-hooking evasion.  
-//! 
+//!
 //! For more info on GhostHunting, see my blog post:
 //! https://fluxsec.red/edr-syscall-hooking
 //!

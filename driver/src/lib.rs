@@ -20,9 +20,10 @@ use ::core::{
 use alloc::{
     boxed::Box,
     format,
-    string::{String, ToString},
     vec::Vec,
 };
+// use alt_sys_new::register_hooks;
+use alt_syscalls::AltSyscalls;
 use core::{
     etw_mon::monitor_kernel_etw,
     process_callbacks::{
@@ -31,7 +32,7 @@ use core::{
     },
     process_monitor::ProcessMonitor,
     registry::{enable_registry_monitoring, unregister_registry_monitor},
-    threads::{set_thread_creation_callback, thread_callback},
+    threads::{set_thread_creation_callback, thread_callback, thread_reg_alt_callbacks},
 };
 use device_comms::{
     DriverMessagesWithMutex, ioctl_check_driver_compatibility, ioctl_dll_hook_syscall,
@@ -66,6 +67,7 @@ use wdk_sys::{
     },
 };
 
+mod alt_syscalls;
 mod core;
 mod device_comms;
 mod ffi;
@@ -112,7 +114,8 @@ pub unsafe extern "system" fn driver_entry(
 
     let status = unsafe { configure_driver(driver, registry_path as *mut _) };
 
-    // Commenting out as causing bug checks whilst developing the new DLL loader mechanism? Odd
+    // thread_reg_alt_callbacks();
+    // let _ = register_hooks(driver);
     // monitor_kernel_etw();
 
     status
@@ -203,6 +206,9 @@ pub unsafe extern "C" fn configure_driver(
     // Core callback functions for the EDR
     //
 
+    // Testing alt syscalls?
+    AltSyscalls::enable(driver);
+
     // Registry callbacks
     if let Err(code) = enable_registry_monitoring(driver) {
         driver_exit(driver); // cleanup any resources before returning
@@ -270,6 +276,8 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     //
     // Unregister callback routines
     //
+
+    AltSyscalls::uninstall();
 
     // registry
     unsafe { unregister_registry_monitor() };
