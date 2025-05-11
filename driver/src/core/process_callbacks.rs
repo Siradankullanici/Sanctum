@@ -282,6 +282,7 @@ extern "C" fn image_load_callback(
     pid: HANDLE,
     image_info: *mut _IMAGE_INFO,
 ) {
+    return;
     // todo can i use this callback in an attempt to detect DLL SOH?? :)
 
     // I guess these should never be null
