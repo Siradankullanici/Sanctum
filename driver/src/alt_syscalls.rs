@@ -21,9 +21,9 @@ pub struct PspServiceDescriptorGroupTable {
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct PspServiceDescriptorRow {
-    code_block_base:    *const c_void,
+    thunk_base: *const c_void,
     ssn_dispatch_table: *const AltSyscallDispatchTable,
-    _reserved:          *const c_void,
+    _reserved: *const c_void,
 }
 
 #[repr(C)]
@@ -34,8 +34,8 @@ struct PspSyscallProviderDispatchContext {
 
 #[repr(C)]
 struct AltSyscallDispatchTable {
-    pub count:       u32,
-    pub pad:         u32,
+    pub count: u32,
+    pub pad: u32,
     pub descriptors: [u32; SSN_COUNT],
 }
 
@@ -44,15 +44,6 @@ pub enum AltSyscallStatus {
     Enable,
     Disable,
 }
-
-#[repr(C)]
-#[derive(Clone, Copy)]
-struct AltServiceDescriptor {
-    pub service:  *const c_void,
-    pub metadata: u32,
-    pub _pad:     u32,
-}
-
 
 impl AltSyscalls {
     /// Initialises the required tables in memory
@@ -122,13 +113,13 @@ impl AltSyscalls {
         // Setting FLAGS |= (METADATA & 0xF) means generic path, capture N args
         //
         let mut metadata_table = Box::new(AltSyscallDispatchTable {
-            count:       SSN_COUNT as u32,
-            pad:         0,
+            count: SSN_COUNT as u32,
+            pad: 0,
             descriptors: [0; SSN_COUNT],
         });
         for i in 0..SSN_COUNT {
             metadata_table.descriptors[i] = ((i as u32) << 4)
-                   | (FLAGS | (METADATA & 0xF));
+                | (FLAGS | (METADATA & 0xF));
         }
         // Leak the box so that we don't (for now) have to manage the memory; yes, this is a memory leak in the kernel, I'll fix it later.
         let p_metadata_table = Box::leak(metadata_table) as *const AltSyscallDispatchTable;
@@ -151,9 +142,9 @@ impl AltSyscalls {
         // syscall provider to use.
         // 
         let new_row = PspServiceDescriptorRow {
-            code_block_base:    p_thunk_array as *const c_void,
+            thunk_base: p_thunk_array as *const c_void,
             ssn_dispatch_table: p_metadata_table,
-            _reserved:          core::ptr::null(),
+            _reserved: core::ptr::null(),
         };
 
         // Write it to the table
@@ -329,7 +320,7 @@ impl AltSyscalls {
 /// **WILL** result in a bug check in that instance. This can only be used with 
 /// `PspSyscallProviderServiceDispatchGeneric`.
 pub unsafe extern "system" fn syscall_handler(
-    _p_nt_function: PKTRAP_FRAME,
+    _p_nt_function: c_void,
     ssn: u32,
     args_base: *const c_void,
     p3_home: *const c_void,
