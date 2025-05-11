@@ -17,11 +17,7 @@ use ::core::{
     ptr::null_mut,
     sync::atomic::{AtomicPtr, Ordering},
 };
-use alloc::{
-    boxed::Box,
-    format,
-    vec::Vec,
-};
+use alloc::{boxed::Box, format, vec::Vec};
 // use alt_sys_new::register_hooks;
 use alt_syscalls::AltSyscalls;
 use core::{

@@ -1,9 +1,20 @@
 //! This module handles callback implementations and and other function related to processes.
 
-use core::{arch::asm, ffi::{c_void, CStr}, ptr::null_mut, str};
+use core::{
+    arch::asm,
+    ffi::{CStr, c_void},
+    ptr::null_mut,
+    str,
+};
 
 use wdk::{nt_success, println};
-use wdk_sys::{ntddk::{IoThreadToProcess, PsGetProcessId, PsLookupProcessByProcessId, PsSetCreateThreadNotifyRoutine, ZwClose, ZwOpenProcess}, BOOLEAN, CLIENT_ID, DISPATCHER_HEADER, PROCESS_ALL_ACCESS, _KTHREAD};
+use wdk_sys::{
+    _KTHREAD, BOOLEAN, CLIENT_ID, DISPATCHER_HEADER, PROCESS_ALL_ACCESS,
+    ntddk::{
+        IoThreadToProcess, PsGetProcessId, PsLookupProcessByProcessId,
+        PsSetCreateThreadNotifyRoutine, ZwClose, ZwOpenProcess,
+    },
+};
 
 use crate::alt_syscalls::{AltSyscallStatus, AltSyscalls};
 
@@ -35,9 +46,7 @@ pub unsafe extern "C" fn thread_callback(
 }
 
 unsafe extern "system" {
-    fn PsGetProcessImageFileName(
-        p_eprocess: *const c_void
-    ) -> *const c_void;
+    fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
 }
 
 pub fn thread_reg_alt_callbacks() {
@@ -50,18 +59,14 @@ pub fn thread_reg_alt_callbacks() {
         )
     };
 
-    let process = unsafe {
-        IoThreadToProcess(ke_thread as *mut _)
-    };
+    let process = unsafe { IoThreadToProcess(ke_thread as *mut _) };
 
     if process.is_null() {
         println!("[sanctum] [-] PEPROCESS was null.");
         return;
     }
 
-    let name_ptr = unsafe {
-        PsGetProcessImageFileName(process as *mut _)
-    };
+    let name_ptr = unsafe { PsGetProcessImageFileName(process as *mut _) };
 
     if name_ptr.is_null() {
         println!("[sanctum] [-] Name ptr was null");
@@ -72,7 +77,7 @@ pub fn thread_reg_alt_callbacks() {
         Err(e) => {
             println!("[sanctum] [-] Could not get the process name as a str. {e}");
             return;
-        },
+        }
     };
 
     // Set the thread attributes for "malware.exe"

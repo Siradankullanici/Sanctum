@@ -62,15 +62,15 @@ unsafe extern "C" {
 
 #[repr(C)]
 struct LdrDataTableEntry {
-    InLoadOrderLinks:    LIST_ENTRY,       // 0x00
-    InMemoryOrderLinks:  LIST_ENTRY,       // 0x10
+    InLoadOrderLinks: LIST_ENTRY,           // 0x00
+    InMemoryOrderLinks: LIST_ENTRY,         // 0x10
     InInitializationOrderLinks: LIST_ENTRY, // 0x20
-    DllBase:             *const c_void,    // 0x30
-    EntryPoint:          *const c_void,    // 0x38
-    SizeOfImage:         u32,              // 0x40
-    _padding:            u32,              // 0x44
-    FullDllName:         UNICODE_STRING,   // 0x48
-    BaseDllName:         UNICODE_STRING,   // 0x58
+    DllBase: *const c_void,                 // 0x30
+    EntryPoint: *const c_void,              // 0x38
+    SizeOfImage: u32,                       // 0x40
+    _padding: u32,                          // 0x44
+    FullDllName: UNICODE_STRING,            // 0x48
+    BaseDllName: UNICODE_STRING,            // 0x58
 }
 
 /// Gets the base address and module size of a module in the kernel by traversing the InLoadOrderLinks struct of the `DRIVER_OBJECT`.
@@ -79,10 +79,7 @@ struct LdrDataTableEntry {
 /// - `ok` - The function will return `Ok` with a [`ModuleImageBaseInfo`].
 /// - `err` - Returns DriverError.
 #[inline(always)]
-pub fn get_module_base_and_sz(
-    needle: &str,
-) -> Result<ModuleImageBaseInfo, DriverError> {
-
+pub fn get_module_base_and_sz(needle: &str) -> Result<ModuleImageBaseInfo, DriverError> {
     let head = unsafe { &PsLoadedModuleList as *const LIST_ENTRY };
 
     let mut link = unsafe { (*head).Flink };
@@ -91,12 +88,11 @@ pub fn get_module_base_and_sz(
         let entry = link as *mut LdrDataTableEntry;
 
         let unicode = unsafe { &(*entry).BaseDllName };
-        let len     = (unicode.Length / 2) as usize;
-        let buf     = unicode.Buffer;
+        let len = (unicode.Length / 2) as usize;
+        let buf = unicode.Buffer;
         if !buf.is_null() && len > 0 && len < 256 {
-
             let slice = unsafe { from_raw_parts(buf, len) };
-            let name  = String::from_utf16_lossy(slice);
+            let name = String::from_utf16_lossy(slice);
 
             if name.eq_ignore_ascii_case(needle) {
                 let base = unsafe { (*entry).DllBase };
