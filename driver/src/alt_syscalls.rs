@@ -49,7 +49,7 @@ pub enum AltSyscallStatus {
 impl AltSyscalls {
     /// Initialises the required tables in memory
     pub fn enable(driver: &mut DRIVER_OBJECT) {
-
+        // How many stack args we want to memcpy; I use my own method to get these..
         const NUM_QWORD_STACK_ARGS_TO_CPY: u32 = 0x0;
         // These flags ensure we go the PspSyscallProviderServiceDispatchGeneric route
         const GENERIC_PATH_FLAGS: u32 = 0x10;
