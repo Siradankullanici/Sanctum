@@ -2,7 +2,15 @@
 
 ![Rust Kernel Driver EDR Sanctum](imgs/evidence/sanctum-cover.webp)
 
-This project is a Windows Driver written in Rust.
+This project is a Windows Driver written in Rust. It now makes full use of [Alternative Syscalls](https://fluxsec.red/alt-syscalls-for-windows-11), an undocumented feature of the Windows 11 Kernel which I have 
+done some research on! The POC for that can be found in this project :). 
+
+The README for this project is now quite out of date; it's on my list to fix, but the easiest way you can view its capabilities is from the 'dev log' on my [blog](https://fluxsec.red/sanctum-edr-intro), so I'd recommend having a read through of that,
+where I explain the design decisions I have made, and how I have tried to combat some modern malware tactics!
+
+The structures used in Alt Syscalls can be seen below:
+
+![Windows 11 Alt Syscall Structs](imgs/evidence/structs.svg)
 
 You can find some demos on my [YouTube channel](https://www.youtube.com/@FluxSec) of the EDR. Including, blocking of a live Remcos sample based on behaviour (not static indicators):
 
@@ -94,17 +102,6 @@ Scanning a folder:
 
 The driver monitors the creation of new processes, termination of processes, and process handles requested by applications. The driver will then
 send this data back up to the usermode application (`um_engine`) via IOCTL.
-
-## Basic IOCTL
-
-The driver can be communicated with both via IOCTLs and named pipes, here is an example of data being sent from the driver back up to user land:
-
-![Rust driver IOCTL](imgs/evidence/drv_msg.png)
-
-Driver checks compatibility with the client version and will panic (usermode) and unload the driver if the versions are not compatible.
-
-![Driver compatibility](imgs/evidence/ioctl_compatible.png)
-
 
 # Additional info
 
