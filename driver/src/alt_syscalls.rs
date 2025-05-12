@@ -23,7 +23,7 @@ pub struct PspServiceDescriptorGroupTable {
 #[repr(C)]
 #[derive(Copy, Clone)]
 struct PspServiceDescriptorRow {
-    thunk_base: *const c_void,
+    driver_base: *const c_void,
     ssn_dispatch_table: *const AltSyscallDispatchTable,
     _reserved: *const c_void,
 }
@@ -60,70 +60,51 @@ impl AltSyscalls {
         const _: () = assert!(SLOT_ID <= 20, "SLOT_ID for alt syscalls cannot be > 20");
 
         //
-        // Allocate a non-paged executable region of memory for us to put our shellcode thunks which will
-        // essentially 'bootstrap' our callback routine.
-        // This thunk array contains 16 bytes per thunk, indexed by the SSN. We will write beyond the usual ntdll
-        // SSNs (there are lots more. Not doing so results in system instability. I dont actually know the max number of
-        // SSNs, so I've set this to a ridiculous number found in the constant: `SSN_COUNT`.
-        //
-        let thunk_bytes = SSN_COUNT * 16;
-        let p_thunk_array = unsafe {
-            ExAllocatePool2(
-                POOL_FLAG_NON_PAGED_EXECUTE,
-                thunk_bytes as _,
-                b"stb!"[0] as _,
-            )
-        } as *mut u8;
-        if p_thunk_array.is_null() {
-            println!("[sanctum] [-] failed to alloc stubs");
-            return;
-        }
+        // Get the base address of the driver, so that we can bit shift in the RVA of the callback.
+        // 
+        let driver_base = match get_module_base_and_sz("sanctum.sys") {
+            Ok(info) => info.base_address,
+            Err(e) => {
+                println!("[-] Could not get base address of driver. {:?}", e);
+                return;
+            },
+        };
 
         //
         // For each syscall out of `SSN_COUNT`, we want to write our bootstrap thunk
         // so that we jump to our callback routine.
         //
-        let callback_address = syscall_handler as usize as u64;
-
-        for i in 0..SSN_COUNT {
-            let dest = unsafe { p_thunk_array.add(i * 16) };
-
-            unsafe {
-                // mov rax, imm64
-                *dest.offset(0) = 0x48;
-                *dest.offset(1) = 0xB8;
-                // write the 8-byte address of the callback routine
-                core::ptr::write_unaligned(dest.offset(2) as *mut u64, callback_address);
-                // jmp rax
-                *dest.offset(10) = 0xFF;
-                *dest.offset(11) = 0xE0;
-                // pad to 16 bytes, write nps
-                for pad in 12..16 {
-                    *dest.offset(pad) = 0x90;
-                }
-            }
-        }
+        let callback_address = syscall_handler as usize;
 
         //
-        // Now build the 'mini dispatch table':  one per descriptor. Using multiple descriptor ID's should enable us to use different
-        // callback routines I think. I haven't experimented with it, but I imagine thats why. When the ID indexes into the table, the offset
-        // of the thunk is where we would jump to a different callback routine.
+        // Now build the 'mini dispatch table':  one per descriptor. Each index of the descriptor contains a relative pointer from the driver base
+        // address to the callback function.
         //
         // low–4 bits   = metadata (0x10 = generic path + N args to capture via a later memcpy),
         // high bits    = descriptor index<<4.
         //
         // Setting FLAGS |= (METADATA & 0xF) means generic path, capture N args
         //
-        let mut metadata_table = Box::new(AltSyscallDispatchTable {
+        let metadata_table = Box::new(AltSyscallDispatchTable {
             count: SSN_COUNT as u32,
             pad: 0,
             descriptors: [0; SSN_COUNT],
         });
-        for i in 0..SSN_COUNT {
-            metadata_table.descriptors[i] = ((i as u32) << 4) | (FLAGS | (METADATA & 0xF));
-        }
+
         // Leak the box so that we don't (for now) have to manage the memory; yes, this is a memory leak in the kernel, I'll fix it later.
         let p_metadata_table = Box::leak(metadata_table) as *const AltSyscallDispatchTable;
+
+        let rva_offset_callback = callback_address - driver_base as usize;
+        // SAFETY: Check the offset size will fit into a u32
+        if rva_offset_callback > u32::MAX as _ {
+            println!("[sanctum] [-] OFfset calculation very wrong? Offset: {:#x}", rva_offset_callback);
+            return;
+        }
+
+        for i in 0..SSN_COUNT {
+            unsafe { &mut *(p_metadata_table as *mut AltSyscallDispatchTable)}.descriptors[i] = ((rva_offset_callback as u32) << 4) | (FLAGS | (METADATA & 0xF));
+        }
+        
         println!(
             "[sanctum] [+] Address of the alt syscalls metadata table: {:p}",
             p_metadata_table
@@ -146,7 +127,7 @@ impl AltSyscalls {
         // syscall provider to use.
         //
         let new_row = PspServiceDescriptorRow {
-            thunk_base: p_thunk_array as *const c_void,
+            driver_base,
             ssn_dispatch_table: p_metadata_table,
             _reserved: core::ptr::null(),
         };
