@@ -79,7 +79,7 @@ impl AltSyscalls {
         //
         let callback_address = syscall_handler as usize;
         let metadata_table = Box::new(AltSyscallDispatchTable {
-            count: SSN_COUNT as u32,
+            count: SSN_COUNT as _,
             descriptors: [0; SSN_COUNT],
         });
 
