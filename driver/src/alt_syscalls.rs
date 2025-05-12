@@ -36,8 +36,7 @@ struct PspSyscallProviderDispatchContext {
 
 #[repr(C)]
 struct AltSyscallDispatchTable {
-    pub count: u32,
-    pub pad: u32,
+    pub count: u64,
     pub descriptors: [u32; SSN_COUNT],
 }
 
@@ -50,11 +49,10 @@ pub enum AltSyscallStatus {
 impl AltSyscalls {
     /// Initialises the required tables in memory
     pub fn enable(driver: &mut DRIVER_OBJECT) {
-        // todo improve function, return error state?
 
-        const METADATA: u32 = 0x0;
+        const NUM_QWORD_STACK_ARGS_TO_CPY: u32 = 0x0;
         // These flags ensure we go the PspSyscallProviderServiceDispatchGeneric route
-        const FLAGS: u32 = 0x10;
+        const GENERIC_PATH_FLAGS: u32 = 0x10;
 
         // Enforce the SLOT_ID rules at compile time
         const _: () = assert!(SLOT_ID <= 20, "SLOT_ID for alt syscalls cannot be > 20");
@@ -71,12 +69,6 @@ impl AltSyscalls {
         };
 
         //
-        // For each syscall out of `SSN_COUNT`, we want to write our bootstrap thunk
-        // so that we jump to our callback routine.
-        //
-        let callback_address = syscall_handler as usize;
-
-        //
         // Now build the 'mini dispatch table':  one per descriptor. Each index of the descriptor contains a relative pointer from the driver base
         // address to the callback function.
         //
@@ -85,9 +77,9 @@ impl AltSyscalls {
         //
         // Setting FLAGS |= (METADATA & 0xF) means generic path, capture N args
         //
+        let callback_address = syscall_handler as usize;
         let metadata_table = Box::new(AltSyscallDispatchTable {
             count: SSN_COUNT as u32,
-            pad: 0,
             descriptors: [0; SSN_COUNT],
         });
 
@@ -102,7 +94,7 @@ impl AltSyscalls {
         }
 
         for i in 0..SSN_COUNT {
-            unsafe { &mut *(p_metadata_table as *mut AltSyscallDispatchTable)}.descriptors[i] = ((rva_offset_callback as u32) << 4) | (FLAGS | (METADATA & 0xF));
+            unsafe { &mut *(p_metadata_table as *mut AltSyscallDispatchTable)}.descriptors[i] = ((rva_offset_callback as u32) << 4) | (GENERIC_PATH_FLAGS | (NUM_QWORD_STACK_ARGS_TO_CPY & 0xF));
         }
         
         println!(
