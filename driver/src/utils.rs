@@ -15,18 +15,13 @@ use alloc::{
 use shared_no_std::constants::SanctumVersion;
 use wdk::println;
 use wdk_sys::{
-    _KTHREAD, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF,
-    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE,
-    IO_STATUS_BLOCK, LIST_ENTRY, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, OBJECT_ATTRIBUTES,
-    PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG,
-    UNICODE_STRING,
     ntddk::{
         IoThreadToProcess, KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString,
         ZwClose, ZwCreateFile, ZwWriteFile,
-    },
+    }, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK, LIST_ENTRY, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG, UNICODE_STRING, _EPROCESS, _KPROCESS, _KTHREAD
 };
 
-use crate::{DRIVER_MESSAGES, ffi::InitializeObjectAttributes};
+use crate::{ffi::{InitializeObjectAttributes, PsGetProcessImageFileName}, DRIVER_MESSAGES};
 
 #[derive(Debug)]
 /// A custom error enum for the Sanctum driver
@@ -250,10 +245,6 @@ pub fn unicode_to_string(input: *const UNICODE_STRING) -> Result<String, DriverE
     Ok(String::from_utf8_lossy(slice).to_string())
 }
 
-unsafe extern "system" {
-    fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
-}
-
 pub fn thread_to_process_name<'a>(thread: *mut _KTHREAD) -> Result<&'a str, DriverError> {
     let process = unsafe { IoThreadToProcess(thread as *mut _) };
 
@@ -262,6 +253,10 @@ pub fn thread_to_process_name<'a>(thread: *mut _KTHREAD) -> Result<&'a str, Driv
         return Err(DriverError::NullPtr);
     }
 
+    eprocess_to_process_name(process as *mut _)
+}
+
+pub fn eprocess_to_process_name<'a>(process: *mut _EPROCESS) -> Result<&'a str, DriverError> {
     let name_ptr = unsafe { PsGetProcessImageFileName(process as *mut _) };
 
     if name_ptr.is_null() {
@@ -277,6 +272,27 @@ pub fn thread_to_process_name<'a>(thread: *mut _KTHREAD) -> Result<&'a str, Driv
     };
 
     Ok(name)
+}
+
+pub fn eprocess_to_pid(process: *mut _EPROCESS) -> Result<u64, DriverError> {
+    if process.is_null() {
+        return Err(DriverError::NullPtr);
+    }
+
+    // SAFETY: Null checked 
+    // We are using a raw pointer offset here as the Rust wdk doesn't define / export the _EPROCESS / _KPROCESS
+    // types.
+    // There is **no** guarantee that this will work on any other build than my VM. Perhaps this needs a todo marker to fix at some
+    // point?
+    let pid_offset = unsafe { (process as *mut *const c_void).add(0x1d0) };
+
+    if pid_offset.is_null() {
+        return Err(DriverError::NullPtr);
+    }
+
+    let pid = unsafe { *pid_offset } as u64;
+
+    Ok(pid)
 }
 
 /// The interface for message logging. This includes both logging to a file in \SystemRoot\ and an interface

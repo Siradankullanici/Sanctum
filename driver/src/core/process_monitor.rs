@@ -27,13 +27,12 @@ use wdk_mutex::{
     grt::Grt,
 };
 use wdk_sys::{
-    _MODE::KernelMode,
-    HANDLE, LARGE_INTEGER, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE,
     ntddk::{
-        KeDelayExecutionThread, KeQuerySystemTimePrecise, ObReferenceObjectByHandle,
-        PsCreateSystemThread,
-    },
+        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObReferenceObjectByHandle, PsCreateSystemThread
+    }, HANDLE, LARGE_INTEGER, LIST_ENTRY, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _KTHREAD, _MODE::KernelMode
 };
+
+use crate::utils::{eprocess_to_pid, eprocess_to_process_name, DriverError};
 
 /// A `Process` is a Sanctum driver representation of a Windows process so that actions it preforms, and is performed
 /// onto it, can be tracked and monitored.
@@ -100,6 +99,10 @@ impl ProcessMonitor {
     /// The `ProcessMonitor` is required for use in driver callback routines, therefore we can either track via a single
     /// static; or use the `Grt` design pattern (favoured in this case).
     pub fn new() -> Result<(), GrtError> {
+
+        // Walk all processes and add to the proc mon.
+        let mut processes = BTreeMap::<u64, Process>::new();
+
         Grt::register_fast_mutex("ProcessMonitor", BTreeMap::<u64, Process>::new())
     }
 
@@ -433,4 +436,52 @@ unsafe extern "C" fn thread_run_monitor_ghost_hunting(_: *mut c_void) {
             break;
         }
     }
+}
+
+fn walk_processes_add_to_process_monitor(
+    processes: &mut BTreeMap<u64, Process>,
+) {
+    // Offsets in bytes for Win11 24H2
+    const ACTIVE_PROCESS_LINKS_OFFSET: usize = 0x1d8;
+    const UNIQUE_PROCESS_ID_OFFSET: usize = 0x1d0;
+    const THREAD_LIST_HEAD_OFFSET: usize = 0x370;
+    const THREAD_LIST_ENTRY_OFFSET: usize = 0x578;
+
+    let current_process = unsafe { IoGetCurrentProcess() };
+    if current_process.is_null() {
+        println!("[sanctum] [-] current_process was NULL");
+        return;
+    }
+
+    // Get the starting head for the list
+    let head = unsafe { (current_process as *mut u8).add(ACTIVE_PROCESS_LINKS_OFFSET) }
+        as *mut LIST_ENTRY;
+    let mut entry = unsafe { (*head).Flink };
+
+    while entry != head {
+        // Get the record for the _EPROCESS
+        let p_e_process =
+            unsafe { (entry as *mut u8).sub(ACTIVE_PROCESS_LINKS_OFFSET) } as *mut _EPROCESS;
+
+
+        let process_details = match extract_process_details(p_e_process) {
+            Ok(p) => p,
+            Err(e) => {
+                println!("[sanctum] [-] Failed to get process data during process walk. {:?}", e);
+                entry = unsafe { (*entry).Flink };
+                continue;
+            },
+        };
+
+        entry = unsafe { (*entry).Flink };
+    }
+}
+
+fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<(&'a str, u64), DriverError> {
+    let process_name = eprocess_to_process_name(process as *mut _)?;
+    let pid = eprocess_to_pid(process)?;
+
+    Ok(
+        (process_name, pid)
+    )
 }

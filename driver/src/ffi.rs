@@ -61,3 +61,7 @@ pub unsafe fn InitializeObjectAttributes(
 
     Ok(())
 }
+
+unsafe extern "system" {
+    pub fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
+}

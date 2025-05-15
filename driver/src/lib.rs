@@ -110,11 +110,65 @@ pub unsafe extern "system" fn driver_entry(
 
     let status = unsafe { configure_driver(driver, registry_path as *mut _) };
 
-    // thread_reg_alt_callbacks();
-    // let _ = register_hooks(driver);
-    // monitor_kernel_etw();
+    if let Err(e) = initialise_sanctum(driver) {
+        return e;
+    };
 
     status
+}
+
+/// Performs the initialisation routines for the Sanctum driver, initialising things specific to the 
+/// actual tasking of the driver; as opposed to the driver configuration, which is done in 
+/// [`configure_driver`].
+fn initialise_sanctum(driver: &mut DRIVER_OBJECT) -> Result<(), i32> {
+
+    AltSyscalls::initialise_for_system(driver);
+
+    // Process image loads
+    if let Err(e) = ProcessMonitor::new() {
+        println!(
+            "[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting",
+            e
+        );
+        return Err(STATUS_UNSUCCESSFUL);
+    }
+
+    // Registry callbacks
+    if let Err(code) = enable_registry_monitoring(driver) {
+        driver_exit(driver); // cleanup any resources before returning
+        return Err(code);
+    }
+
+    // Thread interception
+    set_thread_creation_callback();
+
+    ProcessMonitor::start_ghost_hunt_monitor();
+
+    let status = register_image_load_callback();
+    if !nt_success(status) {
+        println!("[sanctum] [-] Could not start PsSetLoadImageNotifyRoutine. Status: {status}");
+        driver_exit(driver); // cleanup any resources before returning
+        return Err(status);
+    }
+
+    // Intercepting process creation
+    let res =
+        unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8) };
+    if res != STATUS_SUCCESS {
+        println!(
+            "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
+        );
+        driver_exit(driver); // cleanup any resources before returning
+        return Err(res);
+    }
+
+    // Requests for a handle
+    if let Err(e) = ProcessHandleCallback::register_callback() {
+        driver_exit(driver); // cleanup any resources before returning
+        return Err(e);
+    }
+
+    Ok(())
 }
 
 /// This deals with setting up the driver and any callbacks / configurations required
@@ -197,57 +251,6 @@ pub unsafe extern "C" fn configure_driver(
     // (*driver).MajorFunction[IRP_MJ_WRITE as usize] = Some(handle_ioctl);
     driver.MajorFunction[IRP_MJ_DEVICE_CONTROL as usize] = Some(handle_ioctl);
     driver.DriverUnload = Some(driver_exit);
-
-    //
-    // Core callback functions for the EDR
-    //
-
-    // Testing alt syscalls?
-    AltSyscalls::enable(driver);
-
-    // Registry callbacks
-    if let Err(code) = enable_registry_monitoring(driver) {
-        driver_exit(driver); // cleanup any resources before returning
-        return code;
-    }
-
-    // Thread interception
-    set_thread_creation_callback();
-
-    // Process image loads
-    if let Err(e) = ProcessMonitor::new() {
-        println!(
-            "[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting",
-            e
-        );
-        return STATUS_UNSUCCESSFUL;
-    }
-
-    ProcessMonitor::start_ghost_hunt_monitor();
-
-    let status = register_image_load_callback();
-    if !nt_success(status) {
-        println!("[sanctum] [-] Could not start PsSetLoadImageNotifyRoutine. Status: {status}");
-        driver_exit(driver); // cleanup any resources before returning
-        return status;
-    }
-
-    // Intercepting process creation
-    let res =
-        unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), FALSE as u8) };
-    if res != STATUS_SUCCESS {
-        println!(
-            "[sanctum] [-] Unable to create device via IoCreateDevice. Failed with code: {res}."
-        );
-        driver_exit(driver); // cleanup any resources before returning
-        return res;
-    }
-
-    // Requests for a handle
-    if let Err(e) = ProcessHandleCallback::register_callback() {
-        driver_exit(driver); // cleanup any resources before returning
-        return e;
-    }
 
     // Specifies the type of buffering that is used by the I/O manager for I/O requests that are sent to the device stack.
     (*device_object).Flags |= DO_BUFFERED_IO;

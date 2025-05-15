@@ -38,6 +38,7 @@
         "KIRQL",
         "KLDR",
         "KMUTEX",
+        "kprocess",
         "KSPIN",
         "KTHREAD",
         "KTRAP",
