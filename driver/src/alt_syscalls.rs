@@ -1,6 +1,6 @@
 use core::ffi::c_void;
 
-use alloc::boxed::Box;
+use alloc::{boxed::Box, vec::Vec};
 use wdk::println;
 use wdk_sys::{
     _EPROCESS, _KTHREAD, DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD,
@@ -8,7 +8,9 @@ use wdk_sys::{
     ntddk::{ExAllocatePool2, IoGetCurrentProcess, IoThreadToProcess},
 };
 
-use crate::utils::{DriverError, get_module_base_and_sz, scan_module_for_byte_pattern};
+use crate::utils::{
+    DriverError, get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name,
+};
 
 const SLOT_ID: u32 = 0;
 const SSN_COUNT: usize = 0x500;
@@ -59,13 +61,13 @@ impl AltSyscalls {
 
         //
         // Get the base address of the driver, so that we can bit shift in the RVA of the callback.
-        // 
+        //
         let driver_base = match get_module_base_and_sz("sanctum.sys") {
             Ok(info) => info.base_address,
             Err(e) => {
                 println!("[-] Could not get base address of driver. {:?}", e);
                 return;
-            },
+            }
         };
 
         //
@@ -89,14 +91,19 @@ impl AltSyscalls {
         let rva_offset_callback = callback_address - driver_base as usize;
         // SAFETY: Check the offset size will fit into a u32
         if rva_offset_callback > u32::MAX as _ {
-            println!("[sanctum] [-] OFfset calculation very wrong? Offset: {:#x}", rva_offset_callback);
+            println!(
+                "[sanctum] [-] OFfset calculation very wrong? Offset: {:#x}",
+                rva_offset_callback
+            );
             return;
         }
 
         for i in 0..SSN_COUNT {
-            unsafe { &mut *(p_metadata_table as *mut AltSyscallDispatchTable)}.descriptors[i] = ((rva_offset_callback as u32) << 4) | (GENERIC_PATH_FLAGS | (NUM_QWORD_STACK_ARGS_TO_CPY & 0xF));
+            unsafe { &mut *(p_metadata_table as *mut AltSyscallDispatchTable) }.descriptors[i] =
+                ((rva_offset_callback as u32) << 4)
+                    | (GENERIC_PATH_FLAGS | (NUM_QWORD_STACK_ARGS_TO_CPY & 0xF));
         }
-        
+
         println!(
             "[sanctum] [+] Address of the alt syscalls metadata table: {:p}",
             p_metadata_table
@@ -130,7 +137,7 @@ impl AltSyscalls {
         }
 
         // Enumerate all active processes and threads, and enable the relevant bits so that the alt syscall 'machine' can work :)
-        Self::walk_active_processes_and_set_bits(AltSyscallStatus::Enable);
+        Self::walk_active_processes_and_set_bits(AltSyscallStatus::Enable, None);
     }
 
     /// Sets the required context bits in memory on thread and KTHREAD.
@@ -200,7 +207,7 @@ impl AltSyscalls {
 
     /// Uninstall the Alt Syscall handlers from the kernel.
     pub fn uninstall() {
-        Self::walk_active_processes_and_set_bits(AltSyscallStatus::Disable);
+        Self::walk_active_processes_and_set_bits(AltSyscallStatus::Disable, None);
 
         // todo clean up the allocated memory
     }
@@ -210,10 +217,15 @@ impl AltSyscalls {
     ///
     /// # Args:
     /// - `status`: Whether you wish to enable, or disable the feature
+    /// - `isolated_processes`: If you wish just to set the relevant bits on a single process; then add a vec of process names
+    /// to match on, with a *name* logic.
     ///
     /// # Note:
     /// This function is specifically crafted for W11 24H2; to generalise in the future after POC
-    fn walk_active_processes_and_set_bits(status: AltSyscallStatus) {
+    fn walk_active_processes_and_set_bits(
+        status: AltSyscallStatus,
+        isolated_processes: Option<&[&str]>,
+    ) {
         // Offsets in bytes for Win11 24H2
         const ACTIVE_PROCESS_LINKS_OFFSET: usize = 0x1d8;
         const UNIQUE_PROCESS_ID_OFFSET: usize = 0x1d0;
@@ -257,6 +269,34 @@ impl AltSyscalls {
                 // alt syscalls work
                 let p_k_thread = unsafe { (thread_entry as *mut u8).sub(THREAD_LIST_ENTRY_OFFSET) }
                     as *mut _KTHREAD;
+
+                if let Some(proc_vec) = &isolated_processes {
+                    match thread_to_process_name(p_k_thread) {
+                        Ok(current_process_name) => {
+                            for needle in proc_vec.into_iter() {
+                                if current_process_name
+                                    .to_lowercase()
+                                    .contains(&needle.to_lowercase())
+                                {
+                                    println!(
+                                        "[sanctum] [+] Process name found for alt syscalls: {}",
+                                        needle
+                                    );
+                                    Self::configure_thread_for_alt_syscalls(p_k_thread, status);
+                                    Self::configure_process_for_alt_syscalls(p_k_thread);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            println!(
+                                "[sanctum] [-] Unable to get process name to set alt syscall bits on targeted process. {:?}",
+                                e
+                            );
+                            thread_entry = unsafe { (*thread_entry).Flink };
+                            continue;
+                        }
+                    }
+                }
 
                 Self::configure_thread_for_alt_syscalls(p_k_thread, status);
                 Self::configure_process_for_alt_syscalls(p_k_thread);

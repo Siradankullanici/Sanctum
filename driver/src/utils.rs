@@ -1,4 +1,10 @@
-use core::{ffi::c_void, iter::once, ptr::null_mut, slice::from_raw_parts, sync::atomic::Ordering};
+use core::{
+    ffi::{CStr, c_void},
+    iter::once,
+    ptr::null_mut,
+    slice::from_raw_parts,
+    sync::atomic::Ordering,
+};
 
 use alloc::{
     format,
@@ -9,13 +15,14 @@ use alloc::{
 use shared_no_std::constants::SanctumVersion;
 use wdk::println;
 use wdk_sys::{
-    DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ,
-    FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK, LIST_ENTRY,
-    OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, OBJECT_ATTRIBUTES, PASSIVE_LEVEL, PHANDLE,
-    POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG, UNICODE_STRING,
+    _KTHREAD, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF,
+    FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE,
+    IO_STATUS_BLOCK, LIST_ENTRY, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, OBJECT_ATTRIBUTES,
+    PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG,
+    UNICODE_STRING,
     ntddk::{
-        KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose,
-        ZwCreateFile, ZwWriteFile,
+        IoThreadToProcess, KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString,
+        ZwClose, ZwCreateFile, ZwWriteFile,
     },
 };
 
@@ -241,6 +248,35 @@ pub fn unicode_to_string(input: *const UNICODE_STRING) -> Result<String, DriverE
     let slice =
         unsafe { core::slice::from_raw_parts(ansi.Buffer as *const u8, ansi.Length as usize) };
     Ok(String::from_utf8_lossy(slice).to_string())
+}
+
+unsafe extern "system" {
+    fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
+}
+
+pub fn thread_to_process_name<'a>(thread: *mut _KTHREAD) -> Result<&'a str, DriverError> {
+    let process = unsafe { IoThreadToProcess(thread as *mut _) };
+
+    if process.is_null() {
+        println!("[sanctum] [-] PEPROCESS was null.");
+        return Err(DriverError::NullPtr);
+    }
+
+    let name_ptr = unsafe { PsGetProcessImageFileName(process as *mut _) };
+
+    if name_ptr.is_null() {
+        println!("[sanctum] [-] Name ptr was null");
+    }
+
+    let name = match unsafe { CStr::from_ptr(name_ptr as *const i8) }.to_str() {
+        Ok(name_str) => name_str,
+        Err(e) => {
+            println!("[sanctum] [-] Could not get the process name as a str. {e}");
+            return Err(DriverError::ModuleNotFound);
+        }
+    };
+
+    Ok(name)
 }
 
 /// The interface for message logging. This includes both logging to a file in \SystemRoot\ and an interface

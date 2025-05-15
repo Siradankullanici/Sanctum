@@ -16,7 +16,10 @@ use wdk_sys::{
     },
 };
 
-use crate::alt_syscalls::{AltSyscallStatus, AltSyscalls};
+use crate::{
+    alt_syscalls::{AltSyscallStatus, AltSyscalls},
+    utils::thread_to_process_name,
+};
 
 /// Instructs the driver to register the thread creation callback routine.
 pub fn set_thread_creation_callback() {
@@ -45,10 +48,6 @@ pub unsafe extern "C" fn thread_callback(
     thread_reg_alt_callbacks();
 }
 
-unsafe extern "system" {
-    fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
-}
-
 pub fn thread_reg_alt_callbacks() {
     let mut ke_thread: *mut c_void = null_mut();
 
@@ -59,32 +58,19 @@ pub fn thread_reg_alt_callbacks() {
         )
     };
 
-    let process = unsafe { IoThreadToProcess(ke_thread as *mut _) };
+    // let thread_process_name = match thread_to_process_name(ke_thread as *mut _) {
+    //     Ok(t) => t.to_lowercase(),
+    //     Err(e) => {
+    //         println!("[sanctum] [-] Could not get process name on new thread creation. {:?}", e);
+    //         return;
+    //     },
+    // };
 
-    if process.is_null() {
-        println!("[sanctum] [-] PEPROCESS was null.");
-        return;
-    }
-
-    let name_ptr = unsafe { PsGetProcessImageFileName(process as *mut _) };
-
-    if name_ptr.is_null() {
-        println!("[sanctum] [-] Name ptr was null");
-    }
-
-    let name = match unsafe { CStr::from_ptr(name_ptr as *const i8) }.to_str() {
-        Ok(name_str) => name_str,
-        Err(e) => {
-            println!("[sanctum] [-] Could not get the process name as a str. {e}");
-            return;
-        }
-    };
-
-    // Set the thread attributes for "malware.exe"
-    // if name.contains("malware.") {
-    //     AltSyscalls::set_thread_for_alt_syscalls(ke_thread as *mut _);
-    //     AltSyscalls::set_process_for_alt_syscalls(ke_thread as *mut _);
-    //     // unsafe { asm!("int3") };
+    // for needle in ["mssense", "Defender", "MsMpEng"] {
+    //     if thread_process_name.contains(&needle.to_lowercase()) {
+    //         AltSyscalls::configure_thread_for_alt_syscalls(ke_thread as *mut _, AltSyscallStatus::Enable);
+    //         AltSyscalls::configure_process_for_alt_syscalls(ke_thread as *mut _);
+    //     }
     // }
 
     AltSyscalls::configure_thread_for_alt_syscalls(ke_thread as *mut _, AltSyscallStatus::Enable);
