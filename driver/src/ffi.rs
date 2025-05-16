@@ -3,11 +3,7 @@
 use core::{ffi::c_void, ptr::null_mut};
 
 use wdk_sys::{
-    _EVENT_TYPE::SynchronizationEvent,
-    DISPATCH_LEVEL, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, NTSTATUS,
-    OBJECT_ATTRIBUTES, PDRIVER_OBJECT, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES,
-    PROCESSINFOCLASS, PSECURITY_DESCRIPTOR, PUNICODE_STRING, ULONG,
-    ntddk::{KeGetCurrentIrql, KeInitializeEvent},
+    ntddk::{KeGetCurrentIrql, KeInitializeEvent}, DISPATCH_LEVEL, FALSE, FAST_MUTEX, FM_LOCK_BIT, HANDLE, HANDLE_PTR, NTSTATUS, OBJECT_ATTRIBUTES, PDRIVER_OBJECT, PIO_STACK_LOCATION, PIRP, POBJECT_ATTRIBUTES, PROCESSINFOCLASS, PSECURITY_DESCRIPTOR, PULONG, PUNICODE_STRING, ULONG, _EVENT_TYPE::SynchronizationEvent
 };
 
 pub unsafe fn IoGetCurrentIrpStackLocation(irp: PIRP) -> PIO_STACK_LOCATION {
@@ -63,5 +59,12 @@ pub unsafe fn InitializeObjectAttributes(
 }
 
 unsafe extern "system" {
-    pub fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
+    pub unsafe fn PsGetProcessImageFileName(p_eprocess: *const c_void) -> *const c_void;
+    pub unsafe fn NtQueryInformationProcess(
+        handle: HANDLE,
+        flags: i32,
+        process_information: *mut c_void,
+        len: ULONG,
+        return_len: PULONG,
+    ) -> NTSTATUS;
 }

@@ -13,14 +13,14 @@
 //! - Exposes APIs to register new processes, remove exited ones, and feed
 //!   Ghost Hunting telemetry
 
-use core::{ffi::c_void, ptr::null_mut, time::Duration};
+use core::{ffi::c_void, ptr::{null, null_mut}, time::Duration};
 
-use alloc::{collections::btree_map::BTreeMap, string::String, vec::Vec};
+use alloc::{collections::btree_map::BTreeMap, string::{String, ToString}, vec::Vec};
 use shared_no_std::{
     driver_ipc::ProcessStarted,
     ghost_hunting::{NtFunction, Syscall, SyscallEventSource},
 };
-use wdk::println;
+use wdk::{nt_success, println};
 use wdk_mutex::{
     errors::GrtError,
     fast_mutex::{FastMutex, FastMutexGuard},
@@ -28,11 +28,11 @@ use wdk_mutex::{
 };
 use wdk_sys::{
     ntddk::{
-        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObReferenceObjectByHandle, PsCreateSystemThread
-    }, HANDLE, LARGE_INTEGER, LIST_ENTRY, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _KTHREAD, _MODE::KernelMode
+        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObReferenceObjectByHandle, PsCreateSystemThread, ZwOpenProcess
+    }, CLIENT_ID, HANDLE, LARGE_INTEGER, LIST_ENTRY, NTSTATUS, OBJECT_ATTRIBUTES, PROCESSINFOCLASS, PROCESS_ALL_ACCESS, PROCESS_BASIC_INFORMATION, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _KTHREAD, _MODE::KernelMode, _PROCESSINFOCLASS::ProcessBasicInformation
 };
 
-use crate::utils::{eprocess_to_pid, eprocess_to_process_name, DriverError};
+use crate::{ffi::NtQueryInformationProcess, utils::{eprocess_to_pid, eprocess_to_process_name, DriverError}};
 
 /// A `Process` is a Sanctum driver representation of a Windows process so that actions it preforms, and is performed
 /// onto it, can be tracked and monitored.
@@ -463,7 +463,6 @@ fn walk_processes_add_to_process_monitor(
         let p_e_process =
             unsafe { (entry as *mut u8).sub(ACTIVE_PROCESS_LINKS_OFFSET) } as *mut _EPROCESS;
 
-
         let process_details = match extract_process_details(p_e_process) {
             Ok(p) => p,
             Err(e) => {
@@ -473,15 +472,51 @@ fn walk_processes_add_to_process_monitor(
             },
         };
 
+        // todo add process_details to btreemap or use onboard_new_process
+
         entry = unsafe { (*entry).Flink };
     }
 }
 
-fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<(&'a str, u64), DriverError> {
+fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<ProcessStarted, DriverError> {
     let process_name = eprocess_to_process_name(process as *mut _)?;
     let pid = eprocess_to_pid(process)?;
 
+    let mut process_information = PROCESS_BASIC_INFORMATION::default();
+    let mut out_handle: HANDLE = null_mut();
+    let mut obj_attr = OBJECT_ATTRIBUTES::default();
+    let mut client_id = CLIENT_ID {
+        UniqueProcess: pid as *mut c_void,
+        UniqueThread: null_mut(),
+    };
+    let mut out_sz = 0;
+
+    // todo handle errors here
+    let _ = unsafe { ZwOpenProcess(&mut out_handle, PROCESS_ALL_ACCESS, &mut obj_attr, &mut client_id) };
+
+    let result = unsafe {
+        NtQueryInformationProcess(
+            out_handle,
+            0,
+            &mut process_information as *mut _ as *mut _,
+            size_of_val(&process_information) as _,
+            &mut out_sz,
+        )
+    };
+
+    if !nt_success(result) {
+        println!("[sanctum] [-] Result of NtQueryInformationProcess was bad. Code: {:#x}. Out sz: {}", result, out_sz);
+        return Err(DriverError::Unknown("Could not query process information".to_string()));
+    }
+
+    let ppid = process_information.InheritedFromUniqueProcessId;
+
     Ok(
-        (process_name, pid)
+        ProcessStarted { 
+            image_name: process_name.to_string(), 
+            command_line: String::new(), 
+            parent_pid: ppid,
+            pid: pid 
+        }
     )
 }
