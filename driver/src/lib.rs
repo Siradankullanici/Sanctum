@@ -28,6 +28,7 @@ use core::{
     },
     process_monitor::ProcessMonitor,
     registry::{enable_registry_monitoring, unregister_registry_monitor},
+    syscall_processing::SyscallPostProcessor,
     threads::{set_thread_creation_callback, thread_callback, thread_reg_alt_callbacks},
 };
 use device_comms::{
@@ -86,7 +87,6 @@ static DRIVER_MESSAGES_CACHE: AtomicPtr<DriverMessagesWithMutex> = AtomicPtr::ne
 static DRIVER_CONTEXT_PTR: AtomicPtr<DeviceContext> = AtomicPtr::new(null_mut());
 static REGISTRATION_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
 static AP_DEVICE_OBJECT: AtomicPtr<DEVICE_OBJECT> = AtomicPtr::new(null_mut());
-pub static DRIVER_OBJECT_GLOBAL: AtomicPtr<DRIVER_OBJECT> = AtomicPtr::new(null_mut());
 
 struct DeviceContext {
     log_file_mutex: KMutex<u32>,
@@ -118,17 +118,10 @@ pub unsafe extern "system" fn driver_entry(
     status
 }
 
-/// Performs the initialisation routines for the Sanctum driver, initialising things specific to the 
-/// actual tasking of the driver; as opposed to the driver configuration, which is done in 
+/// Performs the initialisation routines for the Sanctum driver, initialising things specific to the
+/// actual tasking of the driver; as opposed to the driver configuration, which is done in
 /// [`configure_driver`].
 fn initialise_sanctum(driver: &mut DRIVER_OBJECT) -> Result<(), i32> {
-
-    // Store the DRIVER_OBJECT in a global static; we need to access this in some callback routines where
-    // we cannot safely pass in a reference to the object.
-    // This will be set to null on driver exit, so when subsequent access is made, we can verify the driver 
-    // object exists if for some reason the callback is still active.
-    DRIVER_OBJECT_GLOBAL.store(driver, Ordering::SeqCst);
-
     AltSyscalls::initialise_for_system(driver);
 
     // Process image loads
@@ -137,6 +130,11 @@ fn initialise_sanctum(driver: &mut DRIVER_OBJECT) -> Result<(), i32> {
             "[sanctum] [i] Failed to initialise the ProcessMonitor. {:?}. Exiting",
             e
         );
+        return Err(STATUS_UNSUCCESSFUL);
+    }
+
+    if let Err(e) = SyscallPostProcessor::spawn() {
+        println!("[sanctum] [-] Error starting SyscallPostProcessor. {:?}", e);
         return Err(STATUS_UNSUCCESSFUL);
     }
 
@@ -288,6 +286,8 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     // registry
     unsafe { unregister_registry_monitor() };
 
+    let _ = SyscallPostProcessor::exit();
+
     // drop the callback for new process interception
     let res =
         unsafe { PsSetCreateProcessNotifyRoutineEx(Some(process_create_callback), TRUE as u8) };
@@ -342,9 +342,6 @@ extern "C" fn driver_exit(driver: *mut DRIVER_OBJECT) {
     if let Err(e) = unsafe { Grt::destroy() } {
         println!("Error destroying: {:?}", e);
     }
-
-    // Clean up the global static storing the DRIVER_OBJECT
-    DRIVER_OBJECT_GLOBAL.store(null_mut(), Ordering::SeqCst);
 
     // delete the device
     unsafe {

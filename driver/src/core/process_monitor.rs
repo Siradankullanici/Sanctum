@@ -13,9 +13,17 @@
 //! - Exposes APIs to register new processes, remove exited ones, and feed
 //!   Ghost Hunting telemetry
 
-use core::{ffi::c_void, ptr::{null, null_mut}, time::Duration};
+use core::{
+    ffi::c_void,
+    ptr::{null, null_mut},
+    time::Duration,
+};
 
-use alloc::{collections::btree_map::BTreeMap, string::{String, ToString}, vec::Vec};
+use alloc::{
+    collections::btree_map::BTreeMap,
+    string::{String, ToString},
+    vec::Vec,
+};
 use shared_no_std::{
     driver_ipc::ProcessStarted,
     ghost_hunting::{NtFunction, Syscall, SyscallEventSource},
@@ -27,12 +35,22 @@ use wdk_mutex::{
     grt::Grt,
 };
 use wdk_sys::{
+    _EPROCESS,
+    _MODE::KernelMode,
+    HANDLE, LARGE_INTEGER, LIST_ENTRY, PROCESS_ALL_ACCESS, PROCESS_BASIC_INFORMATION,
+    PsProcessType, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE,
     ntddk::{
-        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObOpenObjectByPointer, ObReferenceObjectByHandle, PsCreateSystemThread, PsGetProcessId
-    }, PsProcessType, HANDLE, LARGE_INTEGER, LIST_ENTRY, PROCESS_ALL_ACCESS, PROCESS_BASIC_INFORMATION, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _MODE::KernelMode
+        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise,
+        ObOpenObjectByPointer, ObReferenceObjectByHandle, PsCreateSystemThread, PsGetProcessId,
+    },
 };
 
-use crate::{ffi::{InitializeObjectAttributes, NtQueryInformationProcess}, utils::{eprocess_to_process_name, DriverError}};
+use crate::{
+    ffi::{InitializeObjectAttributes, NtQueryInformationProcess},
+    utils::{DriverError, eprocess_to_process_name},
+};
+
+use super::syscall_processing::SyscallPostProcessor;
 
 /// A `Process` is a Sanctum driver representation of a Windows process so that actions it preforms, and is performed
 /// onto it, can be tracked and monitored.
@@ -99,15 +117,9 @@ impl ProcessMonitor {
     /// The `ProcessMonitor` is required for use in driver callback routines, therefore we can either track via a single
     /// static; or use the `Grt` design pattern (favoured in this case).
     pub fn new() -> Result<(), GrtError> {
-
         // Walk all processes and add to the proc mon.
         let mut processes = BTreeMap::<u64, Process>::new();
         walk_processes_get_details(&mut processes);
-
-        println!("[sanctu,] [i] Processes found:");
-        for p in &processes {
-            println!("[{}]: {}, {}", *p.0, (p.1).process_image, (p.1).ppid);
-        }
 
         Grt::register_fast_mutex("ProcessMonitor", processes)
     }
@@ -444,9 +456,11 @@ unsafe extern "C" fn thread_run_monitor_ghost_hunting(_: *mut c_void) {
     }
 }
 
-fn walk_processes_get_details(
-    processes: &mut BTreeMap<u64, Process>,
-) {
+/// Walk all processes and get [`Process`] details for each process running on the system.
+///
+/// This function is designed to be run on driver initialisation / setup to record what processes are running at the starting point.
+/// It may be possible, during the snapshot, a new process is started and is missed.
+fn walk_processes_get_details(processes: &mut BTreeMap<u64, Process>) {
     // Offsets in bytes for Win11 24H2
     const ACTIVE_PROCESS_LINKS_OFFSET: usize = 0x1d8;
 
@@ -457,8 +471,8 @@ fn walk_processes_get_details(
     }
 
     // Get the starting head for the list
-    let head = unsafe { (current_process as *mut u8).add(ACTIVE_PROCESS_LINKS_OFFSET) }
-        as *mut LIST_ENTRY;
+    let head =
+        unsafe { (current_process as *mut u8).add(ACTIVE_PROCESS_LINKS_OFFSET) } as *mut LIST_ENTRY;
     let mut entry = unsafe { (*head).Flink };
 
     while entry != head {
@@ -469,16 +483,25 @@ fn walk_processes_get_details(
         let process_details = match extract_process_details(p_e_process) {
             Ok(p) => p,
             Err(e) => {
-                println!("[sanctum] [-] Failed to get process data during process walk. {:?}", e);
+                println!(
+                    "[sanctum] [-] Failed to get process data during process walk. {:?}",
+                    e
+                );
                 entry = unsafe { (*entry).Flink };
                 continue;
-            },
+            }
         };
 
         let pid = process_details.pid;
         let img = process_details.process_image.clone();
-        if processes.insert(process_details.pid, process_details).is_some() {
-            println!("[sanctum] [-] Duplicate pid found whilst walking processes? pid: {}, image: {}", pid, img);
+        if processes
+            .insert(process_details.pid, process_details)
+            .is_some()
+        {
+            println!(
+                "[sanctum] [-] Duplicate pid found whilst walking processes? pid: {}, image: {}",
+                pid, img
+            );
         }
 
         entry = unsafe { (*entry).Flink };
@@ -486,7 +509,7 @@ fn walk_processes_get_details(
 }
 
 /// Extracts process details from a given `_EPROCESS`. It collates:
-/// 
+///
 /// - pid
 /// - parent pid
 /// - image name (not full path)
@@ -497,20 +520,27 @@ fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<Process, Drive
 
     let mut process_information = PROCESS_BASIC_INFORMATION::default();
     let mut process_handle: HANDLE = null_mut();
-    
-    let result = unsafe { ObOpenObjectByPointer(
-        process as *mut _,
-        0, 
-        null_mut(),
-        PROCESS_ALL_ACCESS,
-        *PsProcessType,
-        KernelMode as _,
-        &mut process_handle,
-    ) };
+
+    let result = unsafe {
+        ObOpenObjectByPointer(
+            process as *mut _,
+            0,
+            null_mut(),
+            PROCESS_ALL_ACCESS,
+            *PsProcessType,
+            KernelMode as _,
+            &mut process_handle,
+        )
+    };
 
     if !nt_success(result) {
-        println!("[sanctum] [-] ObOpenObjectByPointer failed during process walk. Error: {:#x}", result);
-        return Err(DriverError::Unknown("Could not open process handle".to_string()));
+        println!(
+            "[sanctum] [-] ObOpenObjectByPointer failed during process walk. Error: {:#x}",
+            result
+        );
+        return Err(DriverError::Unknown(
+            "Could not open process handle".to_string(),
+        ));
     }
 
     let result = unsafe {
@@ -524,22 +554,25 @@ fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<Process, Drive
     };
 
     if !nt_success(result) {
-        println!("[sanctum] [-] Result of NtQueryInformationProcess was bad. Code: {:#x}. Out sz: {}", result, out_sz);
-        return Err(DriverError::Unknown("Could not query process information".to_string()));
+        println!(
+            "[sanctum] [-] Result of NtQueryInformationProcess was bad. Code: {:#x}. Out sz: {}",
+            result, out_sz
+        );
+        return Err(DriverError::Unknown(
+            "Could not query process information".to_string(),
+        ));
     }
 
     let ppid = process_information.InheritedFromUniqueProcessId;
 
-    Ok(
-        Process { 
-            pid: pid as _,
-            ppid, 
-            process_image: process_name.to_string(), 
-            commandline_args: String::new(), 
-            risk_score: 0,
-            allow_listed: false, 
-            ghost_hunting_timers: Vec::new(), 
-            targeted_by_apis: Vec::new(), 
-        }
-    )
+    Ok(Process {
+        pid: pid as _,
+        ppid,
+        process_image: process_name.to_string(),
+        commandline_args: String::new(),
+        risk_score: 0,
+        allow_listed: false,
+        ghost_hunting_timers: Vec::new(),
+        targeted_by_apis: Vec::new(),
+    })
 }

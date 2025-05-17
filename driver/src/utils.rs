@@ -15,12 +15,21 @@ use alloc::{
 use shared_no_std::constants::SanctumVersion;
 use wdk::println;
 use wdk_sys::{
+    _EPROCESS, _KPROCESS, _KTHREAD, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL,
+    FILE_OPEN_IF, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE,
+    IO_STATUS_BLOCK, LIST_ENTRY, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, OBJECT_ATTRIBUTES,
+    PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG,
+    UNICODE_STRING,
     ntddk::{
-        IoThreadToProcess, KeGetCurrentIrql, PsGetProcessId, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose, ZwCreateFile, ZwWriteFile
-    }, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK, LIST_ENTRY, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG, UNICODE_STRING, _EPROCESS, _KPROCESS, _KTHREAD
+        IoThreadToProcess, KeGetCurrentIrql, PsGetProcessId, RtlInitUnicodeString,
+        RtlUnicodeStringToAnsiString, ZwClose, ZwCreateFile, ZwWriteFile,
+    },
 };
 
-use crate::{ffi::{InitializeObjectAttributes, PsGetProcessImageFileName}, DRIVER_MESSAGES};
+use crate::{
+    DRIVER_MESSAGES,
+    ffi::{InitializeObjectAttributes, PsGetProcessImageFileName},
+};
 
 #[derive(Debug)]
 /// A custom error enum for the Sanctum driver
@@ -35,6 +44,8 @@ pub enum DriverError {
     ModuleNotFound,
     FunctionNotFoundInModule,
     ImageSizeNotFound,
+    ResourceStateInvalid,
+    MutexError,
     Unknown(String),
 }
 
@@ -272,7 +283,6 @@ pub fn eprocess_to_process_name<'a>(process: *mut _EPROCESS) -> Result<&'a str, 
 
     Ok(name)
 }
-
 
 /// The interface for message logging. This includes both logging to a file in \SystemRoot\ and an interface
 /// for logging to userland (for example, in the event where the system log fails, the userland logger may want to

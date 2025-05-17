@@ -1,10 +1,10 @@
 //! The `AltSyscalls` module is designed merely as the intercept mechanism for using Alternate Syscalls on Windows 11.
 //! This module also defines the callback routine for handling the first stage interception; but actual post-processing of the data
 //! is conducted elsewhere (in the case where we do not want to block a certain action).
-//! 
+//!
 //! Currently; the Alt Syscalls mechanism is not designed to block activity - but it could be refactored in the future to do so
 //! in certain situations.
-//! 
+//!
 //! The mechanism of post processing [`queue_syscall_post_processing`] is using queued WorkItems as to not degrade system performance.
 
 use core::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
@@ -12,12 +12,21 @@ use core::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
 use alloc::boxed::Box;
 use wdk::println;
 use wdk_sys::{
-    ntddk::{IoAllocateWorkItem, IoGetCurrentProcess, IoQueueWorkItemEx, IoThreadToProcess}, DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD, PKTHREAD, _EPROCESS, _KTHREAD, _WORK_QUEUE_TYPE::HyperCriticalWorkQueue
+    _EPROCESS, _KTHREAD,
+    _WORK_QUEUE_TYPE::HyperCriticalWorkQueue,
+    DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD, PKTHREAD,
+    ntddk::{
+        IoAllocateWorkItem, IoGetCurrentProcess, IoQueueWorkItemEx, IoThreadToProcess,
+        PsGetCurrentProcessId,
+    },
 };
 
-use crate::{core::syscall_processing::syscall_post_processing, utils::{
-    get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name, DriverError
-}, DRIVER_OBJECT_GLOBAL};
+use crate::{
+    core::syscall_processing::{KernelSyscallIntercept, SyscallPostProcessor},
+    utils::{
+        DriverError, get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name,
+    },
+};
 
 const SLOT_ID: u32 = 0;
 const SSN_COUNT: usize = 0x500;
@@ -57,7 +66,7 @@ pub enum AltSyscallStatus {
 
 impl AltSyscalls {
     /// Initialises the required tables in memory.
-    /// 
+    ///
     /// This function should only be called once until it is disabled.
     pub fn initialise_for_system(driver: &mut DRIVER_OBJECT) {
         // How many stack args we want to memcpy; I use my own method to get these..
@@ -404,6 +413,7 @@ pub unsafe extern "system" fn syscall_handler(
         // }
         _ => {
             // println!("SSN: {:#x}", ssn);
+            queue_syscall_post_processing();
         }
     }
 
@@ -412,23 +422,10 @@ pub unsafe extern "system" fn syscall_handler(
 
 #[inline(always)]
 fn queue_syscall_post_processing() {
-    let driver_object = DRIVER_OBJECT_GLOBAL.load(Ordering::SeqCst);
-    if driver_object.is_null() {
-        return;
-    }
+    let pid = unsafe { PsGetCurrentProcessId() };
+    let syscall_data = KernelSyscallIntercept { pid: pid as u64 };
 
-    // SAFETY: null ptr checked
-    let device_object = unsafe { *driver_object }.DeviceObject;
-
-    let work_item = unsafe { IoAllocateWorkItem(device_object) };
-
-    // todo context, i think that will be a non-paged pool struct of data we pass a pointer to
-    unsafe { IoQueueWorkItemEx(
-        work_item,
-        Some(syscall_post_processing),
-        HyperCriticalWorkQueue,
-        null_mut(),
-    ) };
+    SyscallPostProcessor::push(syscall_data);
 }
 
 /// Get the address of the non-exported kernel symbol: `PspServiceDescriptorGroupTable`
