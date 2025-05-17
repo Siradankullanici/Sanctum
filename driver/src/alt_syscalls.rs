@@ -1,16 +1,23 @@
-use core::ffi::c_void;
+//! The `AltSyscalls` module is designed merely as the intercept mechanism for using Alternate Syscalls on Windows 11.
+//! This module also defines the callback routine for handling the first stage interception; but actual post-processing of the data
+//! is conducted elsewhere (in the case where we do not want to block a certain action).
+//! 
+//! Currently; the Alt Syscalls mechanism is not designed to block activity - but it could be refactored in the future to do so
+//! in certain situations.
+//! 
+//! The mechanism of post processing [`queue_syscall_post_processing`] is using queued WorkItems as to not degrade system performance.
 
-use alloc::{boxed::Box, vec::Vec};
+use core::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
+
+use alloc::boxed::Box;
 use wdk::println;
 use wdk_sys::{
-    _EPROCESS, _KTHREAD, DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD,
-    PKTHREAD, PKTRAP_FRAME, POOL_FLAG_NON_PAGED_EXECUTE,
-    ntddk::{ExAllocatePool2, IoGetCurrentProcess, IoThreadToProcess},
+    ntddk::{IoAllocateWorkItem, IoGetCurrentProcess, IoQueueWorkItemEx, IoThreadToProcess}, DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD, PKTHREAD, _EPROCESS, _KTHREAD, _WORK_QUEUE_TYPE::HyperCriticalWorkQueue
 };
 
-use crate::utils::{
-    DriverError, get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name,
-};
+use crate::{core::syscall_processing::syscall_post_processing, utils::{
+    get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name, DriverError
+}, DRIVER_OBJECT_GLOBAL};
 
 const SLOT_ID: u32 = 0;
 const SSN_COUNT: usize = 0x500;
@@ -364,6 +371,8 @@ pub unsafe extern "system" fn syscall_handler(
             let protect =
                 unsafe { *(rsp.add(ARG_5_STACK_OFFSET + 8) as *const _ as *const u32) } as u32;
 
+            queue_syscall_post_processing();
+
             // println!(
             //     "[VirtualAllocEx] [i] handle: {:p}, base: {:p}, zero bit: {:p}, Size: {}, alloc_type: {:#x}, protect: {:#x}",
             //     rcx_handle, rdx_base_addr, r8_zero_bit, r9_sz, alloc_type, protect
@@ -399,6 +408,27 @@ pub unsafe extern "system" fn syscall_handler(
     }
 
     1
+}
+
+#[inline(always)]
+fn queue_syscall_post_processing() {
+    let driver_object = DRIVER_OBJECT_GLOBAL.load(Ordering::SeqCst);
+    if driver_object.is_null() {
+        return;
+    }
+
+    // SAFETY: null ptr checked
+    let device_object = unsafe { *driver_object }.DeviceObject;
+
+    let work_item = unsafe { IoAllocateWorkItem(device_object) };
+
+    // todo context, i think that will be a non-paged pool struct of data we pass a pointer to
+    unsafe { IoQueueWorkItemEx(
+        work_item,
+        Some(syscall_post_processing),
+        HyperCriticalWorkQueue,
+        null_mut(),
+    ) };
 }
 
 /// Get the address of the non-exported kernel symbol: `PspServiceDescriptorGroupTable`

@@ -449,9 +449,6 @@ fn walk_processes_get_details(
 ) {
     // Offsets in bytes for Win11 24H2
     const ACTIVE_PROCESS_LINKS_OFFSET: usize = 0x1d8;
-    const UNIQUE_PROCESS_ID_OFFSET: usize = 0x1d0;
-    const THREAD_LIST_HEAD_OFFSET: usize = 0x370;
-    const THREAD_LIST_ENTRY_OFFSET: usize = 0x578;
 
     let current_process = unsafe { IoGetCurrentProcess() };
     if current_process.is_null() {
@@ -488,6 +485,11 @@ fn walk_processes_get_details(
     }
 }
 
+/// Extracts process details from a given `_EPROCESS`. It collates:
+/// 
+/// - pid
+/// - parent pid
+/// - image name (not full path)
 fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<Process, DriverError> {
     let process_name = eprocess_to_process_name(process as *mut _)?;
     let pid = unsafe { PsGetProcessId(process as *mut _) } as usize;
