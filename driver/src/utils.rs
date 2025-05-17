@@ -393,7 +393,6 @@ impl<'a> Log<'a> {
             unsafe {
                 if !handle.is_null() {
                     let _ = ZwClose(*handle);
-                    println!("[sanctum] [+] Closed file handle");
                 }
             }
             return;
@@ -433,7 +432,6 @@ impl<'a> Log<'a> {
             unsafe {
                 if !handle.is_null() {
                     let _ = ZwClose(*handle);
-                    println!("[sanctum] [+] Closed file handle");
                 }
             }
 
@@ -444,7 +442,6 @@ impl<'a> Log<'a> {
         unsafe {
             if !handle.is_null() {
                 let _ = ZwClose(handle as *mut _);
-                println!("[sanctum] [+] Closed file handle");
             }
         }
     }
