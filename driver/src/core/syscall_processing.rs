@@ -223,7 +223,7 @@ unsafe extern "C" fn syscall_post_processing_worker(_: *mut c_void) {
                                 "[sanctum] [-] Could not lock alt_syscall_event_queue. {:?}",
                                 e
                             );
-                            break;
+                            continue;
                         }
                     },
                     Err(e) => {
@@ -231,7 +231,7 @@ unsafe extern "C" fn syscall_post_processing_worker(_: *mut c_void) {
                             "[sanctum] [-] Could not lock get FM: alt_syscall_event_queue. {:?}",
                             e
                         );
-                        break;
+                        continue;
                     }
                 };
 
