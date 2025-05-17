@@ -5,31 +5,34 @@
 //! Currently; the Alt Syscalls mechanism is not designed to block activity - but it could be refactored in the future to do so
 //! in certain situations.
 //!
-//! The mechanism of post processing [`queue_syscall_post_processing`] is using queued WorkItems as to not degrade system performance.
+//! The mechanism of post processing [`queue_syscall_post_processing`] is using queued `wdk_mutex` and offloading the work to a system worker thread within
+//! the driver, as to not degrade system performance.
 
-use core::{ffi::c_void, ptr::null_mut, sync::atomic::Ordering};
+use core::ffi::c_void;
 
 use alloc::boxed::Box;
 use wdk::println;
 use wdk_sys::{
     _EPROCESS, _KTHREAD,
-    _WORK_QUEUE_TYPE::HyperCriticalWorkQueue,
     DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD, PKTHREAD,
     ntddk::{
-        IoAllocateWorkItem, IoGetCurrentProcess, IoQueueWorkItemEx, IoThreadToProcess,
+        IoGetCurrentProcess, IoThreadToProcess,
         PsGetCurrentProcessId,
     },
 };
 
 use crate::{
-    core::syscall_processing::{KernelSyscallIntercept, SyscallPostProcessor},
+    core::syscall_processing::{KernelSyscallIntercept, NtAllocateVirtualMemory, Syscall, SyscallPostProcessor},
     utils::{
-        DriverError, get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name,
+        get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name, DriverError
     },
 };
 
 const SLOT_ID: u32 = 0;
 const SSN_COUNT: usize = 0x500;
+
+const SSN_NT_OPEN_PROCESS: u32 = 0x26;
+const SSN_NT_ALLOCATE_VIRTUAL_MEMORY: u32 = 0x18;
 
 pub struct AltSyscalls;
 
@@ -370,7 +373,7 @@ pub unsafe extern "system" fn syscall_handler(
 
     // todo need to dynamically resolve the syscall for symbol
     match ssn {
-        0x18 => {
+        SSN_NT_ALLOCATE_VIRTUAL_MEMORY => {
             let rcx_handle = unsafe { *(args_base as *const *const c_void) };
             let rdx_base_addr = unsafe { *(args_base.add(0x8) as *const *const c_void) };
             let r8_zero_bit = unsafe { *(args_base.add(0x10) as *const *const usize) };
@@ -380,14 +383,22 @@ pub unsafe extern "system" fn syscall_handler(
             let protect =
                 unsafe { *(rsp.add(ARG_5_STACK_OFFSET + 8) as *const _ as *const u32) } as u32;
 
-            queue_syscall_post_processing();
+            let syscall_data = Syscall::NtAllocateVirtualMemory(NtAllocateVirtualMemory {
+                handle: rcx_handle,
+                base_address: rdx_base_addr,
+                sz: r9_sz,
+                alloc_type,
+                protect_flags: protect,
+            });
+
+            queue_syscall_post_processing(syscall_data);
 
             // println!(
             //     "[VirtualAllocEx] [i] handle: {:p}, base: {:p}, zero bit: {:p}, Size: {}, alloc_type: {:#x}, protect: {:#x}",
             //     rcx_handle, rdx_base_addr, r8_zero_bit, r9_sz, alloc_type, protect
             // );
         }
-        // 0x26 => {
+        // SSN_NT_OPEN_PROCESS => {
         //     println!(
         //         "[NtOpenProcess] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
         //         ssn, rcx, rsp
@@ -413,7 +424,7 @@ pub unsafe extern "system" fn syscall_handler(
         // }
         _ => {
             // println!("SSN: {:#x}", ssn);
-            queue_syscall_post_processing();
+            // queue_syscall_post_processing();
         }
     }
 
@@ -421,11 +432,15 @@ pub unsafe extern "system" fn syscall_handler(
 }
 
 #[inline(always)]
-fn queue_syscall_post_processing() {
-    let pid = unsafe { PsGetCurrentProcessId() };
-    let syscall_data = KernelSyscallIntercept { pid: pid as u64 };
+fn queue_syscall_post_processing(syscall: Syscall) {
+    let pid = unsafe { PsGetCurrentProcessId() } as u64;
 
-    SyscallPostProcessor::push(syscall_data);
+    let parcel = KernelSyscallIntercept {
+        pid,
+        syscall,
+    };
+
+    SyscallPostProcessor::push(parcel);
 }
 
 /// Get the address of the non-exported kernel symbol: `PspServiceDescriptorGroupTable`

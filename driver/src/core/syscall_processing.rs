@@ -34,8 +34,23 @@ static SYSCALL_PP_ACTIVE: AtomicBool = AtomicBool::new(false);
 /// allows the thread to terminate itself.
 static SYSCALL_CANCEL_THREAD: AtomicBool = AtomicBool::new(false);
 static SYSCALL_THREAD_HANDLE: AtomicPtr<c_void> = AtomicPtr::new(null_mut());
+
+pub struct NtAllocateVirtualMemory {
+    pub handle: *const c_void,
+    pub base_address: *const c_void,
+    pub sz: usize,
+    pub alloc_type: u32,
+    pub protect_flags: u32,
+}
+
+pub enum Syscall {
+    NtOpenProcess,
+    NtAllocateVirtualMemory(NtAllocateVirtualMemory),
+}
+
 pub struct KernelSyscallIntercept {
     pub pid: u64,
+    pub syscall: Syscall,
 }
 
 pub struct SyscallPostProcessor;
