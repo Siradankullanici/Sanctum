@@ -16,8 +16,7 @@ use shared_no_std::constants::SanctumVersion;
 use wdk::println;
 use wdk_sys::{
     ntddk::{
-        IoThreadToProcess, KeGetCurrentIrql, RtlInitUnicodeString, RtlUnicodeStringToAnsiString,
-        ZwClose, ZwCreateFile, ZwWriteFile,
+        IoThreadToProcess, KeGetCurrentIrql, PsGetProcessId, RtlInitUnicodeString, RtlUnicodeStringToAnsiString, ZwClose, ZwCreateFile, ZwWriteFile
     }, DRIVER_OBJECT, FALSE, FILE_APPEND_DATA, FILE_ATTRIBUTE_NORMAL, FILE_OPEN_IF, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_SYNCHRONOUS_IO_NONALERT, GENERIC_WRITE, IO_STATUS_BLOCK, LIST_ENTRY, OBJECT_ATTRIBUTES, OBJ_CASE_INSENSITIVE, OBJ_KERNEL_HANDLE, PASSIVE_LEVEL, PHANDLE, POBJECT_ATTRIBUTES, PVOID, STATUS_SUCCESS, STRING, ULONG, UNICODE_STRING, _EPROCESS, _KPROCESS, _KTHREAD
 };
 
@@ -274,26 +273,6 @@ pub fn eprocess_to_process_name<'a>(process: *mut _EPROCESS) -> Result<&'a str, 
     Ok(name)
 }
 
-pub fn eprocess_to_pid(process: *mut _EPROCESS) -> Result<u64, DriverError> {
-    if process.is_null() {
-        return Err(DriverError::NullPtr);
-    }
-
-    // SAFETY: Null checked 
-    // We are using a raw pointer offset here as the Rust wdk doesn't define / export the _EPROCESS / _KPROCESS
-    // types.
-    // There is **no** guarantee that this will work on any other build than my VM. Perhaps this needs a todo marker to fix at some
-    // point?
-    let pid_offset = unsafe { (process as *mut *const c_void).add(0x1d0) };
-
-    if pid_offset.is_null() {
-        return Err(DriverError::NullPtr);
-    }
-
-    let pid = unsafe { *pid_offset } as u64;
-
-    Ok(pid)
-}
 
 /// The interface for message logging. This includes both logging to a file in \SystemRoot\ and an interface
 /// for logging to userland (for example, in the event where the system log fails, the userland logger may want to

@@ -364,35 +364,35 @@ pub unsafe extern "system" fn syscall_handler(
             let protect =
                 unsafe { *(rsp.add(ARG_5_STACK_OFFSET + 8) as *const _ as *const u32) } as u32;
 
-            println!(
-                "[VirtualAllocEx] [i] handle: {:p}, base: {:p}, zero bit: {:p}, Size: {}, alloc_type: {:#x}, protect: {:#x}",
-                rcx_handle, rdx_base_addr, r8_zero_bit, r9_sz, alloc_type, protect
-            );
+            // println!(
+            //     "[VirtualAllocEx] [i] handle: {:p}, base: {:p}, zero bit: {:p}, Size: {}, alloc_type: {:#x}, protect: {:#x}",
+            //     rcx_handle, rdx_base_addr, r8_zero_bit, r9_sz, alloc_type, protect
+            // );
         }
-        0x26 => {
-            println!(
-                "[NtOpenProcess] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
-                ssn, rcx, rsp
-            );
-        }
-        0x3a => {
-            println!(
-                "[Write virtual memory] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
-                ssn, rcx, rsp
-            );
-        }
-        0x4e => {
-            println!(
-                "[create thread] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
-                ssn, rcx, rsp
-            );
-        }
-        0xc9 => {
-            println!(
-                "[create thread ex] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
-                ssn, rcx, rsp
-            );
-        }
+        // 0x26 => {
+        //     println!(
+        //         "[NtOpenProcess] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
+        //         ssn, rcx, rsp
+        //     );
+        // }
+        // 0x3a => {
+        //     println!(
+        //         "[Write virtual memory] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
+        //         ssn, rcx, rsp
+        //     );
+        // }
+        // 0x4e => {
+        //     println!(
+        //         "[create thread] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
+        //         ssn, rcx, rsp
+        //     );
+        // }
+        // 0xc9 => {
+        //     println!(
+        //         "[create thread ex] [i] Hook. SSN {:#x}, rcx as usize: {}. Stack ptr: {:p}",
+        //         ssn, rcx, rsp
+        //     );
+        // }
         _ => {
             // println!("SSN: {:#x}", ssn);
         }

@@ -79,6 +79,7 @@
         "PREOP",
         "println",
         "PROCESSENTRY",
+        "PROCESSINFOCLASS",
         "PSECURITY",
         "PSTR",
         "PUNICODE",

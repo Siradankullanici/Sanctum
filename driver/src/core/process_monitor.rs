@@ -28,18 +28,18 @@ use wdk_mutex::{
 };
 use wdk_sys::{
     ntddk::{
-        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObReferenceObjectByHandle, PsCreateSystemThread, ZwOpenProcess
-    }, CLIENT_ID, HANDLE, LARGE_INTEGER, LIST_ENTRY, NTSTATUS, OBJECT_ATTRIBUTES, PROCESSINFOCLASS, PROCESS_ALL_ACCESS, PROCESS_BASIC_INFORMATION, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _KTHREAD, _MODE::KernelMode, _PROCESSINFOCLASS::ProcessBasicInformation
+        IoGetCurrentProcess, KeDelayExecutionThread, KeQuerySystemTimePrecise, ObOpenObjectByPointer, ObReferenceObjectByHandle, PsCreateSystemThread, PsGetProcessId
+    }, PsProcessType, HANDLE, LARGE_INTEGER, LIST_ENTRY, PROCESS_ALL_ACCESS, PROCESS_BASIC_INFORMATION, STATUS_SUCCESS, THREAD_ALL_ACCESS, TRUE, _EPROCESS, _MODE::KernelMode
 };
 
-use crate::{ffi::NtQueryInformationProcess, utils::{eprocess_to_pid, eprocess_to_process_name, DriverError}};
+use crate::{ffi::{InitializeObjectAttributes, NtQueryInformationProcess}, utils::{eprocess_to_process_name, DriverError}};
 
 /// A `Process` is a Sanctum driver representation of a Windows process so that actions it preforms, and is performed
 /// onto it, can be tracked and monitored.
 pub struct Process {
-    pid: u64,
+    pub pid: u64,
     /// Parent pid
-    ppid: u64,
+    pub ppid: u64,
     pub process_image: String,
     pub commandline_args: String,
     pub risk_score: u16,
@@ -102,8 +102,14 @@ impl ProcessMonitor {
 
         // Walk all processes and add to the proc mon.
         let mut processes = BTreeMap::<u64, Process>::new();
+        walk_processes_get_details(&mut processes);
 
-        Grt::register_fast_mutex("ProcessMonitor", BTreeMap::<u64, Process>::new())
+        println!("[sanctu,] [i] Processes found:");
+        for p in &processes {
+            println!("[{}]: {}, {}", *p.0, (p.1).process_image, (p.1).ppid);
+        }
+
+        Grt::register_fast_mutex("ProcessMonitor", processes)
     }
 
     pub fn onboard_new_process(process: &ProcessStarted) -> Result<(), ProcessErrors> {
@@ -438,7 +444,7 @@ unsafe extern "C" fn thread_run_monitor_ghost_hunting(_: *mut c_void) {
     }
 }
 
-fn walk_processes_add_to_process_monitor(
+fn walk_processes_get_details(
     processes: &mut BTreeMap<u64, Process>,
 ) {
     // Offsets in bytes for Win11 24H2
@@ -472,31 +478,42 @@ fn walk_processes_add_to_process_monitor(
             },
         };
 
-        // todo add process_details to btreemap or use onboard_new_process
+        let pid = process_details.pid;
+        let img = process_details.process_image.clone();
+        if processes.insert(process_details.pid, process_details).is_some() {
+            println!("[sanctum] [-] Duplicate pid found whilst walking processes? pid: {}, image: {}", pid, img);
+        }
 
         entry = unsafe { (*entry).Flink };
     }
 }
 
-fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<ProcessStarted, DriverError> {
+fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<Process, DriverError> {
     let process_name = eprocess_to_process_name(process as *mut _)?;
-    let pid = eprocess_to_pid(process)?;
-
-    let mut process_information = PROCESS_BASIC_INFORMATION::default();
-    let mut out_handle: HANDLE = null_mut();
-    let mut obj_attr = OBJECT_ATTRIBUTES::default();
-    let mut client_id = CLIENT_ID {
-        UniqueProcess: pid as *mut c_void,
-        UniqueThread: null_mut(),
-    };
+    let pid = unsafe { PsGetProcessId(process as *mut _) } as usize;
     let mut out_sz = 0;
 
-    // todo handle errors here
-    let _ = unsafe { ZwOpenProcess(&mut out_handle, PROCESS_ALL_ACCESS, &mut obj_attr, &mut client_id) };
+    let mut process_information = PROCESS_BASIC_INFORMATION::default();
+    let mut process_handle: HANDLE = null_mut();
+    
+    let result = unsafe { ObOpenObjectByPointer(
+        process as *mut _,
+        0, 
+        null_mut(),
+        PROCESS_ALL_ACCESS,
+        *PsProcessType,
+        KernelMode as _,
+        &mut process_handle,
+    ) };
+
+    if !nt_success(result) {
+        println!("[sanctum] [-] ObOpenObjectByPointer failed during process walk. Error: {:#x}", result);
+        return Err(DriverError::Unknown("Could not open process handle".to_string()));
+    }
 
     let result = unsafe {
         NtQueryInformationProcess(
-            out_handle,
+            process_handle,
             0,
             &mut process_information as *mut _ as *mut _,
             size_of_val(&process_information) as _,
@@ -512,11 +529,15 @@ fn extract_process_details<'a>(process: *mut _EPROCESS) -> Result<ProcessStarted
     let ppid = process_information.InheritedFromUniqueProcessId;
 
     Ok(
-        ProcessStarted { 
-            image_name: process_name.to_string(), 
-            command_line: String::new(), 
-            parent_pid: ppid,
-            pid: pid 
+        Process { 
+            pid: pid as _,
+            ppid, 
+            process_image: process_name.to_string(), 
+            commandline_args: String::new(), 
+            risk_score: 0,
+            allow_listed: false, 
+            ghost_hunting_timers: Vec::new(), 
+            targeted_by_apis: Vec::new(), 
         }
     )
 }
