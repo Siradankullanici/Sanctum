@@ -1,0 +1,52 @@
+;===================================================================
+; Sanctum ELAM Driver INF
+; Copyright (c) FluxSec
+;===================================================================
+
+[Version]
+Signature     = "$WINDOWS NT$"
+Class         = "Boot Bus Extender"
+ClassGuid     = {4D36E97D-E325-11CE-BFC1-08002BE10318}
+Provider      = %ProviderString%
+PnpLockDown   = 1
+DriverVer     = 05/20/2025,13.55.10.115
+CatalogFile   = sanctum.cat
+
+[DestinationDirs]
+DefaultDestDir = 12  ; %SystemRoot%\System32\drivers
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles]
+sanctum.sys = 1
+
+[Manufacturer]
+%StdMfg%=Standard,NTamd64
+
+[Standard.NTamd64]
+%DeviceDesc%=SanctumELAM, Root\Sanctum_ELAM
+
+[SanctumELAM]
+CopyFiles=Sanctum_Driver
+
+[Sanctum_Driver]
+sanctum.sys
+
+[SanctumELAM.Services]
+AddService = sanctum, 0x00000002, Sanctum_Service_Install
+
+[Sanctum_Service_Install]
+DisplayName     = %ServiceDesc%
+ServiceType     = 1               ; SERVICE_KERNEL_DRIVER
+StartType       = 0               ; SERVICE_BOOT_START
+ErrorControl    = 3               ; SERVICE_ERROR_CRITICAL
+LoadOrderGroup  = "Early-Launch"
+ServiceBinary   = %12%\sanctum.sys
+
+[Strings]
+ProviderString  = "FluxSec"
+StdMfg          = "(Standard system devices)"
+DiskId1         = "Sanctum ELAM Installation Disk"
+DeviceDesc      = "Sanctum ELAM Driver"
+ServiceDesc     = "Sanctum ELAM Boot Service"
