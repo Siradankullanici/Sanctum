@@ -13,18 +13,17 @@ use core::ffi::c_void;
 use alloc::boxed::Box;
 use wdk::println;
 use wdk_sys::{
-    _EPROCESS, _KTHREAD,
-    DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD, PKTHREAD,
-    ntddk::{
-        IoGetCurrentProcess, IoThreadToProcess,
-        PsGetCurrentProcessId,
-    },
+    _EPROCESS, _KTHREAD, DISPATCHER_HEADER, DRIVER_OBJECT, KTRAP_FRAME, LIST_ENTRY, PETHREAD,
+    PKTHREAD,
+    ntddk::{IoGetCurrentProcess, IoThreadToProcess, PsGetCurrentProcessId},
 };
 
 use crate::{
-    core::syscall_processing::{KernelSyscallIntercept, NtAllocateVirtualMemory, Syscall, SyscallPostProcessor},
+    core::syscall_processing::{
+        KernelSyscallIntercept, NtAllocateVirtualMemory, Syscall, SyscallPostProcessor,
+    },
     utils::{
-        get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name, DriverError
+        DriverError, get_module_base_and_sz, scan_module_for_byte_pattern, thread_to_process_name,
     },
 };
 
@@ -435,10 +434,7 @@ pub unsafe extern "system" fn syscall_handler(
 fn queue_syscall_post_processing(syscall: Syscall) {
     let pid = unsafe { PsGetCurrentProcessId() } as u64;
 
-    let parcel = KernelSyscallIntercept {
-        pid,
-        syscall,
-    };
+    let parcel = KernelSyscallIntercept { pid, syscall };
 
     SyscallPostProcessor::push(parcel);
 }

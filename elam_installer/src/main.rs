@@ -1,8 +1,7 @@
 use windows::{
     Win32::{
-        Storage::FileSystem::{
-            CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_READ_DATA, FILE_SHARE_READ, OPEN_EXISTING,
-        },
+        Foundation::GENERIC_READ,
+        Storage::FileSystem::{CreateFileW, FILE_ATTRIBUTE_NORMAL, FILE_SHARE_READ, OPEN_EXISTING},
         System::{
             Antimalware::InstallELAMCertificateInfo,
             Services::{
@@ -16,24 +15,16 @@ use windows::{
     core::PCWSTR,
 };
 
+use std::{env, os::windows::ffi::OsStrExt, path::PathBuf};
+
 fn main() {
-    //
-    // Step 1:
-    // Install the ELAM certificate via the driver (.sys) file.
-    //
-    println!("[i] Starting Elam installer..");
+    println!("[i] Starting ELAM installer...");
 
-    let mut path: Vec<u16> = vec![];
-    r"C:\Users\flux\AppData\Roaming\Sanctum\sanctum.sys"
-        .encode_utf16()
-        .for_each(|c| path.push(c));
-    path.push(0);
-
-    // todo un hanrdcode this
-    let result = unsafe {
+    let driver_path = full_path("sanctum.sys");
+    let handle = unsafe {
         CreateFileW(
-            PCWSTR(path.as_ptr()),
-            FILE_READ_DATA.0,
+            PCWSTR(driver_path.as_ptr()),
+            GENERIC_READ.0,
             FILE_SHARE_READ,
             None,
             OPEN_EXISTING,
@@ -42,9 +33,15 @@ fn main() {
         )
     };
 
-    let handle = match result {
-        Ok(h) => h,
-        Err(e) => panic!("[!] An error occurred whilst trying to open a handle to the driver. {e}"),
+    let handle = match handle {
+        Ok(h) => {
+            println!(
+                "[+] Opened handle to driver at {:?}",
+                to_string(&driver_path)
+            );
+            h
+        }
+        Err(e) => panic!("[!] Failed to open driver handle. Error: {e}"),
     };
 
     if let Err(e) = unsafe { InstallELAMCertificateInfo(handle) } {
@@ -53,42 +50,38 @@ fn main() {
 
     println!("[+] ELAM certificate installed successfully!");
 
-    //
-    // Step 2:
-    // Create a service with correct privileges
-    //
+    println!("[i] Attempting to create the service...");
+    let h_sc_mgr =
+        match unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_ALL_ACCESS) } {
+            Ok(h) => h,
+            Err(e) => panic!("[!] Unable to open Service Control Manager. Error: {e}"),
+        };
 
-    println!("[i] Attempting to create the service.");
-    let result = unsafe { OpenSCManagerW(PCWSTR::null(), PCWSTR::null(), SC_MANAGER_ALL_ACCESS) };
+    let svc_path = full_path("sanctum_ppl_runner.exe");
+    println!(
+        "[i] Binary path to be used for service: {}",
+        to_string(&svc_path)
+    );
 
-    let h_sc_mgr = match result {
-        Ok(h) => h,
-        Err(e) => panic!("[!] Unable to open SC Manager. {e}"),
-    };
-
-    // create an own process service
-
-    let result = unsafe {
+    let h_svc = match unsafe {
         CreateServiceW(
             h_sc_mgr,
             PCWSTR(svc_name().as_ptr()),
             PCWSTR(svc_name().as_ptr()),
             SC_MANAGER_ALL_ACCESS,
-            SERVICE_WIN32_OWN_PROCESS, // Service that runs in its own process
+            SERVICE_WIN32_OWN_PROCESS,
             SERVICE_DEMAND_START,
             SERVICE_ERROR_NORMAL,
-            PCWSTR(svc_bin_path().as_ptr()),
+            PCWSTR(svc_path.as_ptr()),
             PCWSTR::null(),
             None,
             PCWSTR::null(),
             PCWSTR::null(),
             PCWSTR::null(),
         )
-    };
-
-    let h_svc = match result {
+    } {
         Ok(h) => h,
-        Err(e) => panic!("[!] Failed to create service. {e}"),
+        Err(e) => panic!("[!] Failed to create service. Error: {e}"),
     };
 
     let mut info = SERVICE_LAUNCH_PROTECTED_INFO::default();
@@ -101,30 +94,35 @@ fn main() {
             Some(&mut info as *mut _ as *mut _),
         )
     } {
-        panic!("[!] Error calling ChangeServiceConfig2W. {e}");
+        panic!("[!] Failed to set PPL protection. Error: {e}");
     }
 
-    println!(
-        "[+] Successfully initialised the PPL AntiMalware service. It now needs staring with `net.exe start sanctum_ppl_runner`"
-    );
+    println!("[+] Service created and protected successfully!");
+    println!("[*] Start it with: net.exe start sanctum_ppl_runner");
 }
 
 fn svc_name() -> Vec<u16> {
-    let mut svc_name: Vec<u16> = vec![];
     "sanctum_ppl_runner"
         .encode_utf16()
-        .for_each(|c| svc_name.push(c));
-    svc_name.push(0);
-
-    svc_name
+        .chain(std::iter::once(0))
+        .collect()
 }
 
-fn svc_bin_path() -> Vec<u16> {
-    let mut svc_path: Vec<u16> = vec![];
-    // todo not hardcode
-    r"C:\Users\flux\AppData\Roaming\Sanctum\sanctum_ppl_runner.exe"
-        .encode_utf16()
-        .for_each(|c| svc_path.push(c));
-    svc_path.push(0);
-    svc_path
+fn full_path(file: &str) -> Vec<u16> {
+    let mut path = env::current_dir().expect("Failed to get current directory");
+    path.push(file);
+    path.as_os_str()
+        .encode_wide()
+        .chain(std::iter::once(0))
+        .collect()
+}
+
+fn to_string(wide: &[u16]) -> String {
+    String::from_utf16_lossy(
+        wide.iter()
+            .take_while(|&&c| c != 0)
+            .copied()
+            .collect::<Vec<u16>>()
+            .as_slice(),
+    )
 }

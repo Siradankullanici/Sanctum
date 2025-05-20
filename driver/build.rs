@@ -9,9 +9,9 @@ fn main() -> Result<(), wdk_build::ConfigError> {
     let elam_rc_content = r#"MicrosoftElamCertificateInfo  MSElamCertInfoID
     {
         1,                        
-        L"903E531C8BEF7C2D631BA6927206B073238F0F4489527DDDE267F2DC2FD51DCC\0", // To-Be-Signed Hash
+        L"B2B9E7D1429D9CF79DABA5E77FA304114366BF04FC5EB9F95DB76494F87139BD\0", // To-Be-Signed Hash
         0x800C,                   
-        L"\0"                     
+        L"1.3.6.1.4.1.311.61.4.1;1.3.6.1.5.5.7.3.3\0" // ELAM + Code Signing EKU
     }"#;
 
     let out_dir = env::var("OUT_DIR").expect("OUT_DIR is not set");
