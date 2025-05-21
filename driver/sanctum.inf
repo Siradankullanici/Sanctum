@@ -34,7 +34,7 @@ CopyFiles=Sanctum_Driver
 sanctum.sys
 
 [SanctumELAM.Services]
-AddService = sanctum, 0x00000002, Sanctum_Service_Install
+AddService = SanctumEDR, 0x00000002, Sanctum_Service_Install
 
 [Sanctum_Service_Install]
 DisplayName     = %ServiceDesc%
